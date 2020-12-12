@@ -46,7 +46,7 @@ unsigned char ftmfBuffer[8] = { 0b10000111, 0b01000100, 0, 0, 0, 0, 0, 0};      
 unsigned char ibdBuffer[6] = {0, 0, 0, 0, 0, 0};                                                            // 
 unsigned char srlrBuffer[4] = {0, 200, 0, 1};
 unsigned char ftmsBuffer[2] = {0, 0};
-unsigned char tsBuffer[2] = {1, 2};
+unsigned char tsBuffer[2] = {0x0, 0x0};                                                                     // Training status: flags: 0 (no string present); Status: 0x00 = Other
 unsigned char ftmcpBuffer[1] = { 0x80 };
 
 /**
@@ -112,8 +112,6 @@ const uint8_t fmcpSetSpinDownControl = 0x13;
 const uint8_t fmcpSetTargetedCadence = 0x14;
 const uint8_t fmcpResponseCode = 0x80;
 
-//unsigned short flags = 0x4;
-
 /**
  * The client device
  */
@@ -145,6 +143,17 @@ volatile long cadence_counter;
 long cadence_counter_previous;
 unsigned long cadence_elapsed_time;
 unsigned long cadence_last_millis;
+
+/**
+ * Data for the resistance calculation of the trainer
+ */
+float wind_speed = 0;       // meters per second, resolution 0.001
+float grade = 0;            // percentage, resolution 0.01
+float crr = 0;              // Coefficient of rolling resistance, resolution 0.0001
+float cw = 0;               // Wind resistance Kg/m, resolution 0.01;
+
+float weight = 95;
+float trainer_resistance = 0; // To be mapped to the correct value for the trainer (-4..9)
 
 void writeStatus(int red, int green, int blue) {
   analogWrite(RED, red);
@@ -222,8 +231,8 @@ void loop() {
     if (current_millis > previous_notification + NOTIFICATION_INTERVAL) { // A new notification should be done after the given period (1 second)
   
       writeIndoorBikeDataCharacteristic();
-      writeTrainingStatus();
-      // writeFitnessMachineStatus(); // Fitness Machine Status should be notified when a chane happened, not at regular interval
+      // writeTrainingStatus(); // Training Status shall be notified when there is a transition in the training program
+      // writeFitnessMachineStatus(); // Fitness Machine Status shall be notified when a chane happened, not at regular interval
       previous_notification = millis();
     }
   }
@@ -262,6 +271,7 @@ void writeIndoorBikeDataCharacteristic() {
   indoorBikeDataCharacteristic.writeValue(ibdBuffer, 6);
   Serial.println("Indoor Bike Data written");
 }
+
 void writeTrainingStatus() {
   switch (training_status) {
     case STOPPED:
