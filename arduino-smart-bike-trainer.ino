@@ -154,6 +154,7 @@ void writeStatus(int red, int green, int blue) {
 
 void setup() {
   Serial.begin(115200);
+  randomSeed(analogRead(0)); // For testing purposes of speed and cadence
 
   pinMode(RED, OUTPUT);
   pinMode(GREEN, OUTPUT);
@@ -222,7 +223,7 @@ void loop() {
   
       writeIndoorBikeDataCharacteristic();
       writeTrainingStatus();
-      writeFitnessMachineStatus();
+      // writeFitnessMachineStatus(); // Fitness Machine Status should be notified when a chane happened, not at regular interval
       previous_notification = millis();
     }
   }
@@ -248,15 +249,57 @@ void loop() {
 }
 
 void writeIndoorBikeDataCharacteristic() {
+  ibdBuffer[0] = 0x00 | flagInstantaneousCadence; // More Data = 0 (instantaneous speed present), bit 2: instantaneous cadence present
+  ibdBuffer[1] = 0;
+  speed_raw = random(25, 50) / 2.56; // Testing the speed with a random value
+  cadence_raw = random(75, 150); // Testing the cadence with a random value
+
+  int s = (int)(speed_raw * 100);
+  ibdBuffer[2] = s& 0xFF; // Instantaneous Speed, uint16
+  ibdBuffer[3] = (s >> 8) & 0xFF;
+  ibdBuffer[4] = (int)cadence_raw & 0xFF; // Instantaneous Cadence, uint16
+  ibdBuffer[5] = ((int)cadence_raw >> 8) & 0xFF;
   indoorBikeDataCharacteristic.writeValue(ibdBuffer, 6);
   Serial.println("Indoor Bike Data written");
 }
 void writeTrainingStatus() {
-  trainingStatusCharacteristic.writeValue(tsBuffer, 2);
+  switch (training_status) {
+    case STOPPED:
+      tsBuffer[0] = 0x02;
+      tsBuffer[1] = 0x01;
+      trainingStatusCharacteristic.writeValue(tsBuffer, 2);
+      break;
+    case PAUSED:
+      tsBuffer[0] = 0x02;
+      tsBuffer[1] = 0x02;
+      trainingStatusCharacteristic.writeValue(tsBuffer, 2);
+      break;
+    case RUNNING:
+      tsBuffer[0] = 0x04;
+      trainingStatusCharacteristic.writeValue(tsBuffer, 1);
+      break;
+  }
+  
   Serial.println("Training Status written");
 }
+
 void writeFitnessMachineStatus() {
-  fitnessMachineStatusCharacteristic.writeValue(ftmsBuffer, 2);
+  switch (training_status) {
+    case STOPPED:
+      tsBuffer[0] = 0x02;
+      tsBuffer[1] = 0x01;
+      trainingStatusCharacteristic.writeValue(ftmsBuffer, 2);
+      break;
+    case PAUSED:
+      tsBuffer[0] = 0x02;
+      tsBuffer[1] = 0x02;
+      trainingStatusCharacteristic.writeValue(ftmsBuffer, 2);
+      break;
+    case RUNNING:
+      tsBuffer[0] = 0x04;
+      trainingStatusCharacteristic.writeValue(ftmsBuffer, 1);
+      break;
+  }
   Serial.println("Fitness Machine Status written");
 }
 
