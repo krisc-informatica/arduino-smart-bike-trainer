@@ -318,7 +318,7 @@ void handleControlPoint() {
     Serial.print("OpCode: ");
     Serial.println(fmcpData.values.OPCODE, HEX);
     Serial.print("Values: ");
-    for (int i=0; i<fmcpValueLength; i++) Serial.print(fmcpData.values.OCTETS[i], HEX);
+    for (int i=0; i<fmcpValueLength; i++) Serial.println(fmcpData.values.OCTETS[i], HEX);
     Serial.println();
     switch(fmcpData.values.OPCODE) {
       case fmcpRequestControl: {
@@ -331,10 +331,25 @@ void handleControlPoint() {
       }
       case fmcpStartOrResume: { break; }
       case fmcpStopOrPause: { break; }
+      case fmcpSetTargetResistanceLevel: { break; }
+      case fmcpSetIndoorBikeSimulationParameters: {
+        wind_speed = fmcpData.values.OCTETS[0] + (fmcpData.values.OCTETS[1] << 8);
+        grade = fmcpData.values.OCTETS[2] + (fmcpData.values.OCTETS[3] << 8);
+        crr = fmcpData.values.OCTETS[4];
+        cw = fmcpData.values.OCTETS[5];
+        Serial.println("Wind speed (1000): " + (int)(wind_speed*1000));
+        Serial.println("Grade (100): " + (int)(grade*100));
+        Serial.println("Crr (10000): " + (int)(crr*10000));
+        Serial.println("Cw (100): " + (int)(cw*100));
+        ftmcpBuffer[0] = fmcpResponseCode;
+        ftmcpBuffer[1] = fmcpData.values.OPCODE;
+        ftmcpBuffer[2] =  0x01;
+        fitnessMachineControlPointCharacteristic.writeValue(ftmcpBuffer, 3);
+        break;
+      }
       case fmcpReset:
       case fmcpSetTargetSpeed:
       case fmcpSetTargetInclination:
-      case fmcpSetTargetResistanceLevel:
       case fmcpSetTargetPower:
       case fmcpSetTargetHeartRate:
       case fmcpSetTargetedExpendedEngery:
@@ -345,7 +360,6 @@ void handleControlPoint() {
       case fmcpSetTargetedTimeInTwoHeartRateZones:
       case fmcpSetTargetedTimeInThreeHeartRateZones:
       case fmcpSetTargetedTimeInFiveHeartRateZones:
-      case fmcpSetIndoorBikeSimulationParameters:
       case fmcpSetWheelCircumference:
       case fmcpSetSpinDownControl:
       case fmcpSetTargetedCadence: {
