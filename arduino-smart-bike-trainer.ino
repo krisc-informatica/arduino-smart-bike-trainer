@@ -47,7 +47,7 @@ unsigned char ibdBuffer[6] = {0, 0, 0, 0, 0, 0};                                
 unsigned char srlrBuffer[4] = {0, 200, 0, 1};
 unsigned char ftmsBuffer[2] = {0, 0};
 unsigned char tsBuffer[2] = {0x0, 0x0};                                                                     // Training status: flags: 0 (no string present); Status: 0x00 = Other
-unsigned char ftmcpBuffer[1] = { 0x80 };
+unsigned char ftmcpBuffer[20];
 
 /**
  * Training session
@@ -322,29 +322,39 @@ void handleControlPoint() {
     Serial.println();
     switch(fmcpData.values.OPCODE) {
       case fmcpRequestControl: {
-
+        // Always allow control
+        ftmcpBuffer[0] = fmcpResponseCode;
+        ftmcpBuffer[1] = fmcpData.values.OPCODE;
+        ftmcpBuffer[2] =  0x01;
+        fitnessMachineControlPointCharacteristic.writeValue(ftmcpBuffer, 3);
         break;
       }
-      case fmcpReset: { break; }
-      case fmcpSetTargetSpeed: { break; }
-      case fmcpSetTargetInclination: { break; }
-      case fmcpSetTargetResistanceLevel: { break; }
-      case fmcpSetTargetPower: { break; }
-      case fmcpSetTargetHeartRate: { break; }
       case fmcpStartOrResume: { break; }
       case fmcpStopOrPause: { break; }
-      case fmcpSetTargetedExpendedEngery: { break; }
-      case fmcpSetTargetedNumberOfSteps: { break; }
-      case fmcpSetTargetedNumberOfStrided: { break; }
-      case fmcpSetTargetedDistance: { break; }
-      case fmcpSetTargetedTrainingTime: { break; }
-      case fmcpSetTargetedTimeInTwoHeartRateZones: { break; }
-      case fmcpSetTargetedTimeInThreeHeartRateZones: { break; }
-      case fmcpSetTargetedTimeInFiveHeartRateZones: { break; }
-      case fmcpSetIndoorBikeSimulationParameters: { break; }
-      case fmcpSetWheelCircumference: { break; }
-      case fmcpSetSpinDownControl: { break; }
-      case fmcpSetTargetedCadence: { break; }
+      case fmcpReset:
+      case fmcpSetTargetSpeed:
+      case fmcpSetTargetInclination:
+      case fmcpSetTargetResistanceLevel:
+      case fmcpSetTargetPower:
+      case fmcpSetTargetHeartRate:
+      case fmcpSetTargetedExpendedEngery:
+      case fmcpSetTargetedNumberOfSteps:
+      case fmcpSetTargetedNumberOfStrided:
+      case fmcpSetTargetedDistance:
+      case fmcpSetTargetedTrainingTime:
+      case fmcpSetTargetedTimeInTwoHeartRateZones:
+      case fmcpSetTargetedTimeInThreeHeartRateZones:
+      case fmcpSetTargetedTimeInFiveHeartRateZones:
+      case fmcpSetIndoorBikeSimulationParameters:
+      case fmcpSetWheelCircumference:
+      case fmcpSetSpinDownControl:
+      case fmcpSetTargetedCadence: {
+        ftmcpBuffer[0] = fmcpResponseCode;
+        ftmcpBuffer[1] = fmcpData.values.OPCODE;
+        ftmcpBuffer[2] =  0x02; // Op Coce not supported for now
+        fitnessMachineControlPointCharacteristic.writeValue(ftmcpBuffer, 3);
+        break;
+      }
     }
 }
 
