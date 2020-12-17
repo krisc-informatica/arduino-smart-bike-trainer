@@ -369,6 +369,9 @@ void handleControlPoint() {
         Serial.print("Grade (100): "); Serial.println((int)grade);
         Serial.print("Crr (10000): "); Serial.println((int)crr);
         Serial.print("Cw (100): "); Serial.println((int)cw);
+        
+        setTrainerResistance(wind_speed, grade, crr, cw);
+        
         ftmcpBuffer[0] = fmcpResponseCode;
         ftmcpBuffer[1] = fmcpData.values.OPCODE;
         ftmcpBuffer[2] =  0x01;
@@ -424,6 +427,13 @@ void speedPulseInterrupt() {
 
 void cadencePulseInterrupt() {
   cadence_counter++;
+}
+
+/**
+ * Set the correct resistance level on the physical trainer
+ */
+void setTrainerResistance(float wind_speed, float grade, float crr, float cw) {
+  // Todo: calculate the correct value to set the brake level
 }
 
 /**
