@@ -1,3 +1,42 @@
+/**
+ * Arduino Smart Bike Trainer
+ * 
+ * This Arduino project turns a non-smart digital bicyle trainer (like Tacx Flow T2200) into a smart trainer using a BLE connection for use with Zwift, BKool,...
+ * 
+ * According to https://hackaday.io/project/164276-tacx-flow-ant-conversion the cable layout of the RJ10 connector on the Tacx Flow is as follows:
+ *    1 Cadence signal to computer (one pulse per crank revolution), 3.3V pulses, pulled high (no pulse => 3.3V)
+ *    2 GND/Common.
+ *    3 PWM control signal to brake (2.6V pulses).
+ *    4 AC power / synchronization signal to computer, ~23V AC signal which appears the +ve part is clipped at ~19.5V (see picture).
+ *    5 +18V (~1.5V variation sawtooth profile).
+ *    6 Speed signal to computer (4 pulses per brake axle revolution) 3.3V pulses, pulled high (no pulse => 3.3V)
+ * 
+ * BLE information that might be useful
+ * 
+ *    BLE Base UUID: 00000000-0000-1000-8000-00805F9B34FB
+ *    16-bit UUID to 128-bit: 0000xxxx-0000-1000-8000-00805F9B34FB
+ *    32-bit UUID to 128-bit: xxxxxxxx-0000-1000-8000-00805F9B34FB
+ *    
+ *    FTMS (Fitness Machine Service): 0x1826
+ *      Characteristics:
+ *        Fitness Machine Feature: 0x2ACC
+ *          READ: Fitness Machine Features (32bit) and Target Setting Feature (32bit)
+ *        Indoor Bike Data: 0x2AD2
+ *          NOTIFY (1/sec)
+ *        Training Status: 0x2AD3
+ *          NOTIFY (on change) | READ
+ *        Supported Resistance Level Range: 0x2AD6
+ *          READ
+ *        Fitness Machine Control Point: 0x2AD9
+ *          WRITE
+ *        Fitness Machine Status: 0x2ADA
+ * 
+ * @name   Arduino Smart Bike Trainer
+ * @author Kris Cardinaels <kris@krisc-informatica.be>
+ * 
+ * @link Tacx Flow Ant+ Conversion <https://hackaday.io/project/164276-tacx-flow-ant-conversion>
+ * @link Bicycle Odometer and Speedometer <https://create.arduino.cc/projecthub/alan_dewindt/bicycle-odometer-and-speedometer-with-99-lap-period-recorder-331d2b>
+ */
 #include <ArduinoBLE.h>
 
 #define DEVICE_NAME_LONG "KC Tacx Flow Smart Trainer"
@@ -136,7 +175,7 @@ float speed_raw;
 volatile long speed_counter;
 long speed_counter_previous;
 unsigned long speed_elapsed_time;
-unsigned long speed_last_millis;
+unsigned long speed_last_micros;
 
 float cadence_raw;
 volatile long cadence_counter;
@@ -238,10 +277,10 @@ void loop() {
   }
 
   if (speed_counter != speed_counter_previous) {
-    speed_elapsed_time = (millis() - speed_last_millis);
-    speed_raw = (2.355/(speed_elapsed_time))*10;
+    speed_elapsed_time = (micros() - speed_last_micros);
+    speed_raw = (2.355/(speed_elapsed_time/1000))*10;
     speed_counter_previous = speed_counter;
-    speed_last_millis = millis();
+    speed_last_micros = micros();
   }
 
   if (cadence_counter != cadence_counter_previous) {
@@ -264,7 +303,7 @@ void writeIndoorBikeDataCharacteristic() {
   cadence_raw = random(75, 150); // Testing the cadence with a random value
 
   int s = (int)(speed_raw * 100);
-  ibdBuffer[2] = s& 0xFF; // Instantaneous Speed, uint16
+  ibdBuffer[2] = s & 0xFF; // Instantaneous Speed, uint16
   ibdBuffer[3] = (s >> 8) & 0xFF;
   ibdBuffer[4] = (int)cadence_raw & 0xFF; // Instantaneous Cadence, uint16
   ibdBuffer[5] = ((int)cadence_raw >> 8) & 0xFF;
@@ -294,23 +333,6 @@ void writeTrainingStatus() {
 }
 
 void writeFitnessMachineStatus() {
-  switch (training_status) {
-    case STOPPED:
-      tsBuffer[0] = 0x02;
-      tsBuffer[1] = 0x01;
-      trainingStatusCharacteristic.writeValue(ftmsBuffer, 2);
-      break;
-    case PAUSED:
-      tsBuffer[0] = 0x02;
-      tsBuffer[1] = 0x02;
-      trainingStatusCharacteristic.writeValue(ftmsBuffer, 2);
-      break;
-    case RUNNING:
-      tsBuffer[0] = 0x04;
-      trainingStatusCharacteristic.writeValue(ftmsBuffer, 1);
-      break;
-  }
-  Serial.println("Fitness Machine Status written");
 }
 
 void handleControlPoint() {
@@ -318,7 +340,7 @@ void handleControlPoint() {
     Serial.print("OpCode: ");
     Serial.println(fmcpData.values.OPCODE, HEX);
     Serial.print("Values: ");
-    for (int i=0; i<fmcpValueLength; i++) Serial.println(fmcpData.values.OCTETS[i], HEX);
+    for (int i=0; i<fmcpValueLength-1; i++) Serial.println(fmcpData.values.OCTETS[i], HEX);
     Serial.println();
     switch(fmcpData.values.OPCODE) {
       case fmcpRequestControl: {
@@ -329,18 +351,23 @@ void handleControlPoint() {
         fitnessMachineControlPointCharacteristic.writeValue(ftmcpBuffer, 3);
         break;
       }
-      case fmcpStartOrResume: { break; }
-      case fmcpStopOrPause: { break; }
-      case fmcpSetTargetResistanceLevel: { break; }
+      case fmcpStartOrResume: {
+        training_status = RUNNING;
+        break;
+      }
+      case fmcpStopOrPause: {
+        training_status = STOPPED;
+        break;
+      }
       case fmcpSetIndoorBikeSimulationParameters: {
-        wind_speed = fmcpData.values.OCTETS[0] + (fmcpData.values.OCTETS[1] << 8);
-        grade = fmcpData.values.OCTETS[2] + (fmcpData.values.OCTETS[3] << 8);
+        wind_speed = fmcpData.values.OCTETS[0] + (fmcpData.values.OCTETS[1] * 256);
+        grade = fmcpData.values.OCTETS[2] + (fmcpData.values.OCTETS[3] * 256);
         crr = fmcpData.values.OCTETS[4];
         cw = fmcpData.values.OCTETS[5];
-        Serial.println("Wind speed (1000): " + (int)(wind_speed*1000));
-        Serial.println("Grade (100): " + (int)(grade*100));
-        Serial.println("Crr (10000): " + (int)(crr*10000));
-        Serial.println("Cw (100): " + (int)(cw*100));
+        Serial.print("Wind speed (1000): "); Serial.println((int)(wind_speed));
+        Serial.print("Grade (100): "); Serial.println((int)grade);
+        Serial.print("Crr (10000): "); Serial.println((int)crr);
+        Serial.print("Cw (100): "); Serial.println((int)cw);
         ftmcpBuffer[0] = fmcpResponseCode;
         ftmcpBuffer[1] = fmcpData.values.OPCODE;
         ftmcpBuffer[2] =  0x01;
@@ -348,6 +375,7 @@ void handleControlPoint() {
         break;
       }
       case fmcpReset:
+      case fmcpSetTargetResistanceLevel:
       case fmcpSetTargetSpeed:
       case fmcpSetTargetInclination:
       case fmcpSetTargetPower:
