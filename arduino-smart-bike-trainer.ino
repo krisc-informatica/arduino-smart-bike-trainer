@@ -193,7 +193,7 @@ float crr = 0;              // Coefficient of rolling resistance, resolution 0.0
 float cw = 0;               // Wind resistance Kg/m, resolution 0.01;
 
 float weight = 95;
-float trainer_resistance = 0; // To be mapped to the correct value for the trainer (-4..9)
+float trainer_resistance = 0; // To be mapped to the correct value for the trainer
 
 void writeStatus(int red, int green, int blue) {
   analogWrite(RED, red);
@@ -289,6 +289,11 @@ void loop() {
     cadence_raw = 60000/cadence_elapsed_time;
     cadence_counter_previous = cadence_counter;
     cadence_last_millis = millis();
+  }
+
+  // Write correct resistance level to the brake, only if riding
+  if (speed_raw != 0) {
+    // generate PWM based on trainer_resistance
   }
 
   if (previousControlPointEvent != lastControlPointEvent) { // A newer control point has been written, so handle it
@@ -404,6 +409,9 @@ void handleControlPoint() {
     }
 }
 
+/**
+ * BLE device connected and disconnected handlers 
+ */
 void blePeripheralConnectHandler(BLEDevice central) {
   ble_connected = HIGH;
   writeStatus(1024, 0, 1024);
@@ -413,7 +421,12 @@ void blePeripheralDisconnectHandler(BLEDevice central) {
   ble_connected = LOW;
   writeStatus(1024, 1024, 0);
 }
-
+/**
+ * Interrupt handlers
+ *  - Fitness Machine Control Point written by client
+ *  - Speed pulse interrupt from input port
+ *  - Cadence pulse interrupt from input port
+ */
 void fitnessMachineControlPointCharacteristicWritten(BLEDevice central, BLECharacteristic characteristic) {
   fmcpValueLength = fitnessMachineControlPointCharacteristic.valueLength();
   memset(fmcpData.bytes, 0, sizeof(fmcpData.bytes));
