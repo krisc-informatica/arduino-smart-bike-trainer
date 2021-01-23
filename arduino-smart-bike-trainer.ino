@@ -30,6 +30,15 @@
  *        Fitness Machine Control Point: 0x2AD9
  *          WRITE
  *        Fitness Machine Status: 0x2ADA
+ *        
+ *    CSC (Cycling Speed and Cadence Sensor): 0x1816 (file:///C:/Users/krisc/Downloads/CSCP_SPEC_V10.pdf, https://www.bluetooth.com/wp-content/uploads/Sitecore-Media-Library/Gatt/Xml/Services/org.bluetooth.service.cycling_speed_and_cadence.xml)
+ *      The profile specification document describes the CSC profile consisting of a Sensor which exposes two GATT services:
+ *        - Cycling Speed and Cadence Service (mandatory)
+ *          CSC Measurement (mandatory): 0x2A5B (11 bytes) [https://www.bluetooth.com/wp-content/uploads/Sitecore-Media-Library/Gatt/Xml/Characteristics/org.bluetooth.characteristic.csc_measurement.xml]
+ *          CSC Feature (mandatory): 0x2A5C (2 bytes) [https://www.bluetooth.com/wp-content/uploads/Sitecore-Media-Library/Gatt/Xml/Characteristics/org.bluetooth.characteristic.csc_feature.xml]
+ *          Sensor Location (conditional): 0x2A5D (1 byte) [https://www.bluetooth.com/wp-content/uploads/Sitecore-Media-Library/Gatt/Xml/Characteristics/org.bluetooth.characteristic.sensor_location.xml]
+ *          SC Control Point (conditional): 0x2A55 [https://www.bluetooth.com/wp-content/uploads/Sitecore-Media-Library/Gatt/Xml/Characteristics/org.bluetooth.characteristic.sc_control_point.xml]
+ *        - Device Information Service (optional)
  * 
  * @name   Arduino Smart Bike Trainer
  * @author Kris Cardinaels <kris@krisc-informatica.be>
@@ -71,15 +80,23 @@ long previousControlPointEvent = 0;
  * Fitness Machine Service, uuid 0x1826 or 00001826-0000-1000-8000-00805F9B34FB
  * 
  */
-BLEService fitnessMachineService("1826");
+BLEService fitnessMachineService("1826"); // FTMS
+BLEService cyclingSpeedAndCadenceService("1816"); // CSC
 
-// Service characteristics exposed by our trainer
+// Service characteristics exposed by FTMS
 BLECharacteristic fitnessMachineFeatureCharacteristic("2ACC", BLERead, 8);                                  // Fitness Machine Feature, mandatory, read
 BLECharacteristic indoorBikeDataCharacteristic("2AD2", BLENotify, 6);                                       // Indoor Bike Data, optional, notify
 BLECharacteristic trainingStatusCharacteristic("2AD3", BLENotify | BLERead, 20);                            // Training Status, optional, read & notify
 BLECharacteristic supportedResistanceLevelRangeCharacteristic("2AD6", BLERead, 4);                          // Supported Resistance Level, read, optional
 BLECharacteristic fitnessMachineControlPointCharacteristic("2AD9", BLEWrite | BLEIndicate, FMCP_DATA_SIZE); // Fitness Machine Control Point, optional, write & indicate
 BLECharacteristic fitnessMachineStatusCharacteristic("2ADA", BLENotify, 2);                                 // Fitness Machine Status, mandatory, notify
+
+// Service characteristics exposed by CSC
+BLECharacteristic cscMeasurementCharacteristic("2A5B", BLENotify, 11);                                                      // CSC Measurement, mandatory, notify
+BLECharacteristic cscFeatureCharacteristic("2A5C", BLERead, 2);                                                            // CSC Feature, mandatory, read
+// BLECharacteristic sensorLocation("2A5D", BLERead, 1);                                                       // CSC Sensor Location, conditional, read
+// BLECharacteristic scControlPoint("2A55", BLEWrite | BLEIndicate);                                          // CSC Control Point, conditional, write & indicate
+
 
 // Buffers used to write to the characteristics and initial values
 unsigned char ftmfBuffer[8] = { 0b10000111, 0b01000100, 0, 0, 0, 0, 0, 0};                                  // Features: 0 (Avg speed), 1 (Cadence), 2 (Total distance), 7 (Resistance level), 10 (Heart rate measurement), 14 (Power measurement)
@@ -88,6 +105,9 @@ unsigned char srlrBuffer[4] = {0, 200, 0, 1};
 unsigned char ftmsBuffer[2] = {0, 0};
 unsigned char tsBuffer[2] = {0x0, 0x0};                                                                     // Training status: flags: 0 (no string present); Status: 0x00 = Other
 unsigned char ftmcpBuffer[20];
+
+unsigned char cscmBuffer[11] = {0,0,0,0,0,0,0,0,0,0,0};
+unsigned char cscfBuffer[2] = {0b00000011, 0};                                                              // Features: 0 (Wheel revolution data), 1 (Crank revolution data)
 
 /**
  * Training session
@@ -222,7 +242,6 @@ void setup() {
   BLE.setDeviceName(DEVICE_NAME_LONG);
   BLE.setLocalName(DEVICE_NAME_SHORT);
   BLE.setAdvertisedService(fitnessMachineService);
-
   // add the characteristic to the service
   fitnessMachineService.addCharacteristic(fitnessMachineFeatureCharacteristic);
   fitnessMachineService.addCharacteristic(indoorBikeDataCharacteristic);
@@ -230,9 +249,13 @@ void setup() {
   fitnessMachineService.addCharacteristic(supportedResistanceLevelRangeCharacteristic);
   fitnessMachineService.addCharacteristic(fitnessMachineControlPointCharacteristic);
   fitnessMachineService.addCharacteristic(fitnessMachineStatusCharacteristic);
-
   // Add our AST service to the device
   BLE.addService(fitnessMachineService);
+
+  BLE.setAdvertisedService(cyclingSpeedAndCadenceService);
+  cyclingSpeedAndCadenceService.addCharacteristic(cscMeasurementCharacteristic);
+  cyclingSpeedAndCadenceService.addCharacteristic(cscFeatureCharacteristic);
+  BLE.addService(cyclingSpeedAndCadenceService);
 
   // Write values to the characteristics that can be read
   fitnessMachineFeatureCharacteristic.writeValue(ftmfBuffer, 8);
@@ -240,6 +263,8 @@ void setup() {
   supportedResistanceLevelRangeCharacteristic.writeValue(srlrBuffer, 4);
   fitnessMachineStatusCharacteristic.writeValue(ftmsBuffer, 2);
   trainingStatusCharacteristic.writeValue(tsBuffer, 2);
+
+  cscFeatureCharacteristic.writeValue(cscfBuffer, 2);
 
   // Write requests to the control point characteristic are handled by an event handler
   fitnessMachineControlPointCharacteristic.setEventHandler(BLEWritten, fitnessMachineControlPointCharacteristicWritten);
