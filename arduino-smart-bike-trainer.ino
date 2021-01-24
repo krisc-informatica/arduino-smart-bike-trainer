@@ -78,6 +78,7 @@ long previousControlPointEvent = 0;
 
 /**
  * Fitness Machine Service, uuid 0x1826 or 00001826-0000-1000-8000-00805F9B34FB
+ * Cycling Speed and Cadence service, uuid 0x1816 or 00001816-0000-1000-8000-00805F9B34FB
  * 
  */
 BLEService fitnessMachineService("1826"); // FTMS
@@ -95,7 +96,7 @@ BLECharacteristic fitnessMachineStatusCharacteristic("2ADA", BLENotify, 2);     
 BLECharacteristic cscMeasurementCharacteristic("2A5B", BLENotify, 11);                                                      // CSC Measurement, mandatory, notify
 BLECharacteristic cscFeatureCharacteristic("2A5C", BLERead, 2);                                                            // CSC Feature, mandatory, read
 // BLECharacteristic sensorLocation("2A5D", BLERead, 1);                                                       // CSC Sensor Location, conditional, read
-// BLECharacteristic scControlPoint("2A55", BLEWrite | BLEIndicate);                                          // CSC Control Point, conditional, write & indicate
+// BLECharacteristic scControlPoint("2A55", BLEWrite | BLEIndicate, 30);                                          // CSC Control Point, conditional, write & indicate, 30 bytes chosen randomly
 
 
 // Buffers used to write to the characteristics and initial values
@@ -142,7 +143,7 @@ int instantaeous_cadence = 0;
 int average_cadence = 0;
 int total_distance = 0;
 int resistance_level = 0;
- 
+
 /**
  * Fitness Machine Control Point opcodes 
  * 
@@ -194,15 +195,31 @@ long previous_notification = 0;
 #define SPEED 11
 float speed_raw;
 volatile long speed_counter;
+volatile long speed_timer;
 long speed_counter_previous;
 unsigned long speed_elapsed_time;
 unsigned long speed_last_micros;
 
 float cadence_raw;
 volatile long cadence_counter;
+volatile long cadence_timer;
 long cadence_counter_previous;
 unsigned long cadence_elapsed_time;
 unsigned long cadence_last_millis;
+
+/**
+ * PWM Signal
+ */
+#define SYNC 12
+#define PWM 13
+int pwms[14] = {4200, 3300, 2600, 2100, 1600, 1100, 660, 200, 500, 960, 1400, 1880, 2400, 2940}; // Duration of brake PWM signal in microseconds
+int currentPwm = 8;                                                                              // Starting resistance
+int wait[14] = {10, 10, 10, 10, 10, 10, 10, 10, 0, 0, 0, 0, 0, 0};                               // Delay in milliseconds for the PWM: 0 in rising part of signal, 10 in falling part of signal
+boolean pwmSignalStarted = false;                                                                   // In the loop we have to know whether the pwm signal was started or not
+
+volatile unsigned long syncTime = 4294967295;                                                    // Initialised to max long
+volatile boolean doWait = true;
+
 
 /**
  * Data for the resistance calculation of the trainer
@@ -229,6 +246,13 @@ void setup() {
   pinMode(GREEN, OUTPUT);
   pinMode(BLUE, OUTPUT);
   writeStatus(1024, 1024, 0);
+
+  pinMode(SYNC, INPUT);
+  pinMode(PWM, OUTPUT);
+  pwmSignalStarted = false;
+  currentPwm = 8;
+  digitalWrite(PWM, LOW);
+  attachInterrupt(digitalPinToInterrupt(SYNC), syncSignal, RISING);
 
   if (!BLE.begin()) { // Error starting the bluetooth module
     while (1) {
@@ -296,6 +320,7 @@ void loop() {
     if (current_millis > previous_notification + NOTIFICATION_INTERVAL) { // A new notification should be done after the given period (1 second)
   
       writeIndoorBikeDataCharacteristic();
+      writeCscMeasurement();
       // writeTrainingStatus(); // Training Status shall be notified when there is a transition in the training program
       // writeFitnessMachineStatus(); // Fitness Machine Status shall be notified when a chane happened, not at regular interval
       previous_notification = millis();
@@ -319,12 +344,31 @@ void loop() {
   // Write correct resistance level to the brake, only if riding
   if (speed_raw != 0) {
     // generate PWM based on trainer_resistance
+    generatePwmSignal();
   }
 
   if (previousControlPointEvent != lastControlPointEvent) { // A newer control point has been written, so handle it
     handleControlPoint();
     previousControlPointEvent = lastControlPointEvent;
   }
+}
+
+/**
+ * Generates the brake PWM signal according to the settings of the requested resistance
+ */
+void generatePwmSignal() {
+  long n = micros();
+  if (!pwmSignalStarted && !doWait && (n >= syncTime + wait[currentPwm]*1000)) {
+      digitalWrite(PWM, HIGH);
+      pwmSignalStarted = true;
+      doWait = true;
+  }
+  if (pwmSignalStarted && (n >= syncTime + wait[currentPwm]*1000 + pwms[currentPwm])) {
+      digitalWrite(PWM, LOW);
+      pwmSignalStarted = false;
+      //doWait = true;
+  }
+
 }
 
 void writeIndoorBikeDataCharacteristic() {
@@ -340,6 +384,22 @@ void writeIndoorBikeDataCharacteristic() {
   ibdBuffer[5] = ((int)cadence_raw >> 8) & 0xFF;
   indoorBikeDataCharacteristic.writeValue(ibdBuffer, 6);
   Serial.println("Indoor Bike Data written");
+}
+
+void writeCscMeasurement() {
+  cscmBuffer[0] = 0b00000011; // b0: Wheel revolution data present, b1: Cranck revolution data present
+  cscmBuffer[1] = speed_counter & 0xFF; // Cumulative wheel revolution
+  cscmBuffer[2] = (speed_counter >> 8) & 0xFF;
+  cscmBuffer[3] = (speed_counter >> 16) & 0xFF;
+  cscmBuffer[4] = (speed_counter >> 32) & 0xFF;
+  cscmBuffer[5] = speed_timer & 0xFF; // Last wheel event time
+  cscmBuffer[6] = (speed_timer >> 8) & 0xFF;
+  cscmBuffer[7] = cadence_counter & 0xFF; // Cumulative cranck revolution
+  cscmBuffer[8] = (cadence_counter >> 8) & 0xFF;
+  cscmBuffer[9] = cadence_timer & 0xFF; // Last cranck event time
+  cscmBuffer[10] = (cadence_timer >> 8) & 0xFF;
+  
+  cscMeasurementCharacteristic.writeValue(cscmBuffer, 11);
 }
 
 void writeTrainingStatus() {
@@ -461,10 +521,12 @@ void fitnessMachineControlPointCharacteristicWritten(BLEDevice central, BLEChara
 
 void speedPulseInterrupt() {
   speed_counter++;
+  speed_timer = micros();
 }
 
 void cadencePulseInterrupt() {
   cadence_counter++;
+  cadence_timer = micros();
 }
 
 /**
@@ -509,4 +571,14 @@ long training_read() {
     return millis() - training_started + training_elapsed;
   }
   return training_elapsed;
+}
+
+/**
+ * Handles the synchronization signal:
+ *   - sets the time in microseconds of the signal for the timing of the pwm
+ *   - indicates that the signal can be generated if needed
+ */
+void syncSignal() {
+  syncTime = micros();
+  doWait = false;
 }
