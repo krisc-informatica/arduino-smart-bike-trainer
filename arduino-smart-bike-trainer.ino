@@ -49,6 +49,11 @@
  */
 #include <ArduinoBLE.h>
 
+boolean serial_debug = true; // Will write some debug information to Serial
+
+double BRAKE_SIZE = 23.35; // Distance between two brake speed pulses
+double WHEEL_SIZE = 2100; // Circumference of the wheel, to be defined by the rider
+
 #define DEVICE_NAME_LONG "KC Tacx Flow Smart Trainer"
 #define DEVICE_NAME_SHORT "KC-TFST"
 /** 
@@ -191,27 +196,33 @@ long previous_notification = 0;
 /**
  * Speed and Cadence sensors
  */
-#define CADENCE 10
-#define SPEED 11
-float speed_raw;
-volatile long speed_counter;
+#define SPEED   2
+#define CADENCE 3
+#define PWM     4
+#define SYNC    12
+
+double speed_raw;
+volatile long speed_counter;              // The incrementing counter of speed pulses from the brake
 volatile long speed_timer;
-long speed_counter_previous;
+long speed_counter_previous;              // The previous amount of speed pulses
 unsigned long speed_elapsed_time;
-unsigned long speed_last_micros;
+unsigned long speed_last_millis;
+long speed_counter2;
+long cadence_counter2;
 
 float cadence_raw;
-volatile long cadence_counter;
+volatile long cadence_counter;            // The incrementing counter of cranck revolutions
 volatile long cadence_timer;
 long cadence_counter_previous;
 unsigned long cadence_elapsed_time;
 unsigned long cadence_last_millis;
 
+long cadence_timer_1024; // Used for the CSC service that needs timing 1/1024 of a second
+long speed_timer_1024;
+
 /**
  * PWM Signal
  */
-#define SYNC 12
-#define PWM 13
 int pwms[14] = {4200, 3300, 2600, 2100, 1600, 1100, 660, 200, 500, 960, 1400, 1880, 2400, 2940}; // Duration of brake PWM signal in microseconds
 int currentPwm = 8;                                                                              // Starting resistance
 int wait[14] = {10, 10, 10, 10, 10, 10, 10, 10, 0, 0, 0, 0, 0, 0};                               // Delay in milliseconds for the PWM: 0 in rising part of signal, 10 in falling part of signal
@@ -232,6 +243,9 @@ float cw = 0;               // Wind resistance Kg/m, resolution 0.01;
 float weight = 95;
 float trainer_resistance = 0; // To be mapped to the correct value for the trainer
 
+// General variables
+long current_millis;
+
 void writeStatus(int red, int green, int blue) {
   analogWrite(RED, red);
   analogWrite(GREEN, green);
@@ -239,7 +253,7 @@ void writeStatus(int red, int green, int blue) {
 }
 
 void setup() {
-  Serial.begin(115200);
+  if (serial_debug) Serial.begin(115200);
   randomSeed(analogRead(0)); // For testing purposes of speed and cadence
 
   pinMode(RED, OUTPUT);
@@ -299,8 +313,8 @@ void setup() {
   BLE.setEventHandler(BLEDisconnected, blePeripheralDisconnectHandler);
 
   // Speed and Cadence handling
-  pinMode(SPEED, INPUT_PULLUP);
-  pinMode(CADENCE, INPUT_PULLUP);
+  pinMode(SPEED, INPUT);
+  pinMode(CADENCE, INPUT);
   attachInterrupt(digitalPinToInterrupt(SPEED), speedPulseInterrupt, FALLING);
   attachInterrupt(digitalPinToInterrupt(CADENCE), cadencePulseInterrupt, FALLING);
 
@@ -316,9 +330,17 @@ void loop() {
 
   central = BLE.central();
   if (central && central.connected()) {
-    int current_millis = millis();
+    current_millis = millis();
     if (current_millis > previous_notification + NOTIFICATION_INTERVAL) { // A new notification should be done after the given period (1 second)
-  
+      if (serial_debug) {
+        Serial.print("Speed: ");
+        Serial.println(speed_raw* 3.6);
+        Serial.print("Cadence: ");
+        Serial.println(cadence_raw);
+        Serial.print("PWM: ");
+        Serial.println(currentPwm);
+      }
+          
       writeIndoorBikeDataCharacteristic();
       writeCscMeasurement();
       // writeTrainingStatus(); // Training Status shall be notified when there is a transition in the training program
@@ -327,24 +349,38 @@ void loop() {
     }
   }
 
-  if (speed_counter != speed_counter_previous) {
-    speed_elapsed_time = (micros() - speed_last_micros);
-    speed_raw = (2.355/(speed_elapsed_time/1000))*10;
+  // Calculate speed from cumulative revolutions
+  current_millis = millis();
+  if (speed_counter != speed_counter_previous) { // If at leasts one speed pulse was received
+    speed_raw = ((speed_counter - speed_counter_previous) * BRAKE_SIZE) / (double)(current_millis - speed_last_millis); // Speed in mm/ms or m/s; 23.35mm is distance between speed pulses from brake
     speed_counter_previous = speed_counter;
-    speed_last_micros = micros();
+    speed_last_millis = current_millis;
+  } else {
+    if (current_millis-speed_last_millis > 1000) { // After 1 second the speed is set to 0
+      speed_raw = 0;
+    }
   }
 
-  if (cadence_counter != cadence_counter_previous) {
-    cadence_elapsed_time = (millis() - cadence_last_millis);
-    cadence_raw = 60000/cadence_elapsed_time;
-    cadence_counter_previous = cadence_counter;
-    cadence_last_millis = millis();
-  }
-
-  // Write correct resistance level to the brake, only if riding
-  if (speed_raw != 0) {
+  // Write correct resistance level to the brake, only if riding at a minimum speed (1 m/s or 3.6 km/h)
+  if (speed_raw >= 1) {
+    // Calculate resistance needed, given in currentPwm
+    currentPwm = setTrainerResistance(wind_speed, grade, crr, cw);
     // generate PWM based on trainer_resistance
     generatePwmSignal();
+  }
+
+
+  current_millis = millis(); // Check time again to be sure no to miss some
+  if (cadence_counter != cadence_counter_previous) {
+    cadence_elapsed_time = (current_millis - cadence_last_millis);
+    cadence_raw = ( cadence_counter - cadence_counter_previous) / (double)cadence_elapsed_time; // Cadence: amount of revolutions per millisecond
+    cadence_raw = cadence_raw * 1000;
+    cadence_counter_previous = cadence_counter;
+    cadence_last_millis = current_millis;
+  } else {
+    if (current_millis-cadence_last_millis > 1000) { // After 1 second the cadence is set to 0
+      cadence_raw = 0;
+    }
   }
 
   if (previousControlPointEvent != lastControlPointEvent) { // A newer control point has been written, so handle it
@@ -355,6 +391,8 @@ void loop() {
 
 /**
  * Generates the brake PWM signal according to the settings of the requested resistance
+ * 
+ * @return void
  */
 void generatePwmSignal() {
   long n = micros();
@@ -371,37 +409,59 @@ void generatePwmSignal() {
 
 }
 
+/**
+ * Writes the Indoor Bike Data characteristic
+ * 
+ * @return void
+ */
 void writeIndoorBikeDataCharacteristic() {
   ibdBuffer[0] = 0x00 | flagInstantaneousCadence; // More Data = 0 (instantaneous speed present), bit 2: instantaneous cadence present
   ibdBuffer[1] = 0;
-  speed_raw = random(25, 50) / 2.56; // Testing the speed with a random value
-  cadence_raw = random(75, 150); // Testing the cadence with a random value
 
-  int s = (int)(speed_raw * 100);
+  int s = (int)(speed_raw * 3.6 * 100); // speed_raw is m/s. IndoorBikeData needs km/h in resolution of 0.01
   ibdBuffer[2] = s & 0xFF; // Instantaneous Speed, uint16
   ibdBuffer[3] = (s >> 8) & 0xFF;
   ibdBuffer[4] = (int)cadence_raw & 0xFF; // Instantaneous Cadence, uint16
   ibdBuffer[5] = ((int)cadence_raw >> 8) & 0xFF;
   indoorBikeDataCharacteristic.writeValue(ibdBuffer, 6);
-  Serial.println("Indoor Bike Data written");
+  if (serial_debug) Serial.println("Indoor Bike Data written");
 }
 
+/**
+ * Writes the CSC Measurement characteristic. The speed information must be given in cumulative wheel revolutions.
+ * The trainer value speed_counter is the cumulative brake revolutions (4 pulses per revolution).
+ * The wheel revs = speed_counter2 = speed_counter X brake_size/wheel_size
+ * Times must be given 1/1024 of a second
+ * 
+ * @return void
+ */
 void writeCscMeasurement() {
   cscmBuffer[0] = 0b00000011; // b0: Wheel revolution data present, b1: Cranck revolution data present
-  cscmBuffer[1] = speed_counter & 0xFF; // Cumulative wheel revolution
-  cscmBuffer[2] = (speed_counter >> 8) & 0xFF;
-  cscmBuffer[3] = (speed_counter >> 16) & 0xFF;
-  cscmBuffer[4] = (speed_counter >> 32) & 0xFF;
-  cscmBuffer[5] = speed_timer & 0xFF; // Last wheel event time
-  cscmBuffer[6] = (speed_timer >> 8) & 0xFF;
+
+  speed_counter2 = speed_counter * ( BRAKE_SIZE / WHEEL_SIZE);
+  cscmBuffer[1] = speed_counter2 & 0xFF; // Cumulative wheel revolution
+  cscmBuffer[2] = (speed_counter2 >> 8) & 0xFF;
+  cscmBuffer[3] = (speed_counter2 >> 16) & 0xFF;
+  cscmBuffer[4] = (speed_counter2 >> 32) & 0xFF;
+
+  speed_timer_1024 = speed_last_millis / 1000 * 1024;
+  cscmBuffer[5] = speed_timer_1024 & 0xFF; // Last wheel event time
+  cscmBuffer[6] = (speed_timer_1024 >> 8) & 0xFF;
   cscmBuffer[7] = cadence_counter & 0xFF; // Cumulative cranck revolution
   cscmBuffer[8] = (cadence_counter >> 8) & 0xFF;
-  cscmBuffer[9] = cadence_timer & 0xFF; // Last cranck event time
-  cscmBuffer[10] = (cadence_timer >> 8) & 0xFF;
+  cadence_timer_1024 = cadence_last_millis / 1000 * 1024;
+  cscmBuffer[9] = cadence_timer_1024 & 0xFF; // Last cranck event time
+  cscmBuffer[10] = (cadence_timer_1024 >> 8) & 0xFF;
   
   cscMeasurementCharacteristic.writeValue(cscmBuffer, 11);
 }
 
+/**
+ * Writes the Training Status characteristic.
+ * TODO: implement more fine grained training statuses
+ * 
+ * @return void
+ */
 void writeTrainingStatus() {
   switch (training_status) {
     case STOPPED:
@@ -423,16 +483,28 @@ void writeTrainingStatus() {
   Serial.println("Training Status written");
 }
 
+/**
+ * TODO: Writes the Fitness Machine Status characteristic
+ * 
+ * @return void
+ */
 void writeFitnessMachineStatus() {
 }
 
+/**
+ * Handles an incoming Fitness Machine Control Point request
+ * 
+ * @return void
+ */
 void handleControlPoint() {
+  if (serial_debug) {
     Serial.println("Control point received");
     Serial.print("OpCode: ");
     Serial.println(fmcpData.values.OPCODE, HEX);
     Serial.print("Values: ");
     for (int i=0; i<fmcpValueLength-1; i++) Serial.println(fmcpData.values.OCTETS[i], HEX);
     Serial.println();
+  }
     switch(fmcpData.values.OPCODE) {
       case fmcpRequestControl: {
         // Always allow control
@@ -455,11 +527,13 @@ void handleControlPoint() {
         grade = fmcpData.values.OCTETS[2] + (fmcpData.values.OCTETS[3] * 256);
         crr = fmcpData.values.OCTETS[4];
         cw = fmcpData.values.OCTETS[5];
-        Serial.print("Wind speed (1000): "); Serial.println((int)(wind_speed));
-        Serial.print("Grade (100): "); Serial.println((int)grade);
-        Serial.print("Crr (10000): "); Serial.println((int)crr);
-        Serial.print("Cw (100): "); Serial.println((int)cw);
-        
+        if (serial_debug) {
+          Serial.print("Wind speed (1000): "); Serial.println((int)(wind_speed));
+          Serial.print("Grade (100): "); Serial.println((int)grade);
+          Serial.print("Crr (10000): "); Serial.println((int)crr);
+          Serial.print("Cw (100): "); Serial.println((int)cw);
+        }
+                
         setTrainerResistance(wind_speed, grade, crr, cw);
         
         ftmcpBuffer[0] = fmcpResponseCode;
@@ -487,30 +561,45 @@ void handleControlPoint() {
       case fmcpSetTargetedCadence: {
         ftmcpBuffer[0] = fmcpResponseCode;
         ftmcpBuffer[1] = fmcpData.values.OPCODE;
-        ftmcpBuffer[2] =  0x02; // Op Coce not supported for now
+        ftmcpBuffer[2] =  0x02; // OpCode not supported for now
+        if (serial_debug) Serial.print("Unsupported OpCode received");
         fitnessMachineControlPointCharacteristic.writeValue(ftmcpBuffer, 3);
         break;
       }
     }
 }
 
+/*
+ * BLE device connected and disconnected handlers
+ */
+
 /**
- * BLE device connected and disconnected handlers 
+ * Lights the internal RGB LED to green on connection
+ * 
+ * @return void
  */
 void blePeripheralConnectHandler(BLEDevice central) {
   ble_connected = HIGH;
   writeStatus(1024, 0, 1024);
 }
 
+/*
+ * Lights the internal RGB LED to blue on disconnection
+ * 
+ * @return void
+ */
 void blePeripheralDisconnectHandler(BLEDevice central) {
   ble_connected = LOW;
   writeStatus(1024, 1024, 0);
 }
+
 /**
  * Interrupt handlers
  *  - Fitness Machine Control Point written by client
  *  - Speed pulse interrupt from input port
  *  - Cadence pulse interrupt from input port
+ *  
+ *  The handlers are kept very short so that no time is lost in handling the interrupt
  */
 void fitnessMachineControlPointCharacteristicWritten(BLEDevice central, BLECharacteristic characteristic) {
   fmcpValueLength = fitnessMachineControlPointCharacteristic.valueLength();
@@ -521,19 +610,24 @@ void fitnessMachineControlPointCharacteristicWritten(BLEDevice central, BLEChara
 
 void speedPulseInterrupt() {
   speed_counter++;
-  speed_timer = micros();
+  // speed_timer = millis();
 }
 
 void cadencePulseInterrupt() {
   cadence_counter++;
-  cadence_timer = micros();
+  // cadence_timer = millis();
 }
 
 /**
  * Set the correct resistance level on the physical trainer
+ * 
+ * @return int The new value for the currentPwm
  */
-void setTrainerResistance(float wind_speed, float grade, float crr, float cw) {
+int setTrainerResistance(float wind_speed, float grade, float crr, float cw) {
   // Todo: calculate the correct value to set the brake level
+  if (grade < -4) return 0;
+  else if (grade > 9) return 13;
+  else return map( (int)grade, -4, 9, 0, 13);
 }
 
 /**
