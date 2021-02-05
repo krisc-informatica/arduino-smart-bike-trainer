@@ -142,13 +142,6 @@ const uint8_t flagMetabolicEquivalent = 1024;
 const uint8_t flagElapsedTime = 2048;
 const uint8_t flagRemainingTime = 4096;
 
-int instantaneous_speed = 0;
-int average_speed = 0;
-int instantaeous_cadence = 0;
-int average_cadence = 0;
-int total_distance = 0;
-int resistance_level = 0;
-
 /**
  * Fitness Machine Control Point opcodes 
  * 
@@ -201,24 +194,21 @@ long previous_notification = 0;
 #define PWM     4
 #define SYNC    12
 
-double speed_raw;
-volatile long speed_counter;              // The incrementing counter of speed pulses from the brake
-volatile long speed_timer;
-long speed_counter_previous;              // The previous amount of speed pulses
-unsigned long speed_elapsed_time;
-unsigned long speed_last_millis;
-long speed_counter2;
-long cadence_counter2;
+volatile unsigned long speed_counter = 0;              // The incrementing counter of speed pulses from the brake
+volatile unsigned long speed_timer = 0;                  // The last speed interrupt time
+unsigned long speed_counter_ibd = 0;              // The previous amount of speed pulses written to indoor bike data
+unsigned long speed_counter_csc =0;              // The previous amount of speed pulses written to CSC measurement
+unsigned long speed_timer_ibd = 0;          // The previous time written to ibd
+unsigned long speed_timer_csc = 0;          // The previous time written to csc
+double instantaneous_speed = 0;             // Global variable to hold the calculated speed
 
-float cadence_raw;
-volatile long cadence_counter;            // The incrementing counter of cranck revolutions
-volatile long cadence_timer;
-long cadence_counter_previous;
-unsigned long cadence_elapsed_time;
-unsigned long cadence_last_millis;
-
-long cadence_timer_1024; // Used for the CSC service that needs timing 1/1024 of a second
-long speed_timer_1024;
+volatile unsigned long cadence_counter = 0;            // The incrementing counter of cranck revolutions
+volatile unsigned long cadence_timer;
+unsigned long cadence_counter_ibd = 0;
+unsigned long cadence_counter_csc = 0;
+unsigned long cadence_timer_ibd = 0;
+unsigned long cadence_timer_csc = 0;
+unsigned int instantaneous_cadence = 0;
 
 /**
  * PWM Signal
@@ -316,7 +306,7 @@ void setup() {
   pinMode(SPEED, INPUT);
   pinMode(CADENCE, INPUT);
   attachInterrupt(digitalPinToInterrupt(SPEED), speedPulseInterrupt, FALLING);
-  attachInterrupt(digitalPinToInterrupt(CADENCE), cadencePulseInterrupt, FALLING);
+  attachInterrupt(digitalPinToInterrupt(CADENCE), cadencePulseInterrupt, RISING);
 
 
   // Initialize training to stopped
@@ -334,9 +324,9 @@ void loop() {
     if (current_millis > previous_notification + NOTIFICATION_INTERVAL) { // A new notification should be done after the given period (1 second)
       if (serial_debug) {
         Serial.print("Speed: ");
-        Serial.println(speed_raw* 3.6);
+        Serial.println(instantaneous_speed * 3.6); // instantaneous_speed is in m/s, so multiply by 3.6 to get to km/h
         Serial.print("Cadence: ");
-        Serial.println(cadence_raw);
+        Serial.println(instantaneous_cadence);
         Serial.print("PWM: ");
         Serial.println(currentPwm);
       }
@@ -349,38 +339,14 @@ void loop() {
     }
   }
 
-  // Calculate speed from cumulative revolutions
-  current_millis = millis();
-  if (speed_counter != speed_counter_previous) { // If at leasts one speed pulse was received
-    speed_raw = ((speed_counter - speed_counter_previous) * BRAKE_SIZE) / (double)(current_millis - speed_last_millis); // Speed in mm/ms or m/s; 23.35mm is distance between speed pulses from brake
-    speed_counter_previous = speed_counter;
-    speed_last_millis = current_millis;
-  } else {
-    if (current_millis-speed_last_millis > 1000) { // After 1 second the speed is set to 0
-      speed_raw = 0;
-    }
-  }
+  instantaneous_speed = calculate_speed(speed_counter, speed_counter_ibd, speed_timer, speed_timer_ibd);
 
   // Write correct resistance level to the brake, only if riding at a minimum speed (1 m/s or 3.6 km/h)
-  if (speed_raw >= 1) {
+  if (instantaneous_speed >= 1) {
     // Calculate resistance needed, given in currentPwm
-    currentPwm = setTrainerResistance(wind_speed, grade, crr, cw);
+    int currentPwm = setTrainerResistance(wind_speed, grade, crr, cw);
     // generate PWM based on trainer_resistance
     generatePwmSignal();
-  }
-
-
-  current_millis = millis(); // Check time again to be sure no to miss some
-  if (cadence_counter != cadence_counter_previous) {
-    cadence_elapsed_time = (current_millis - cadence_last_millis);
-    cadence_raw = ( cadence_counter - cadence_counter_previous) / (double)cadence_elapsed_time; // Cadence: amount of revolutions per millisecond
-    cadence_raw = cadence_raw * 1000;
-    cadence_counter_previous = cadence_counter;
-    cadence_last_millis = current_millis;
-  } else {
-    if (current_millis-cadence_last_millis > 1000) { // After 1 second the cadence is set to 0
-      cadence_raw = 0;
-    }
   }
 
   if (previousControlPointEvent != lastControlPointEvent) { // A newer control point has been written, so handle it
@@ -390,7 +356,51 @@ void loop() {
 }
 
 /**
+ * Calculates the instantaneous speed for the given counters in m/s. If the time between pulses was too long (5 sec) then 0 is returned.
+ * 
+ * @param unsigned long current_counter  The counter for the speed pulses
+ * @param unsigned long previous_counter The previous value of the counter
+ * @param unsigned long current_timer    The time of the last speed pulse event (millis)
+ * @param unsigned long previous_timer   The time of the last speed pulse event used (millis)
+ * 
+ * @return double
+ */
+double calculate_speed(unsigned long current_counter, unsigned long previous_counter, unsigned long current_timer, unsigned long previous_timer) {
+  if (current_timer - previous_timer > 5000) {
+    return 0.0;
+  } else {
+    return (current_counter - previous_counter) * BRAKE_SIZE / (double)(current_timer - previous_timer);
+  }
+}
+
+/**
+ * Calculates the instantaneous cadence for the given counters in revolutions/minute. If the time between pulses was too long (5 sec) then 0 is returned.
+ *  
+ * @param unsigned long current_counter  The counter for the cadence pulses
+ * @param unsigned long previous_counter The previous value of the counter
+ * @param unsigned long current_timer    The time of the last cadence pulse event (millis)
+ * @param unsigned long previous_timer   The time of the last cadence pulse event used (millis)
+ * 
+ * @return unsigned int
+
+ */
+unsigned int calculate_cadence(unsigned long current_counter, unsigned long previous_counter, unsigned long current_timer, unsigned long previous_timer) {
+  if (current_timer - previous_timer > 5000) {
+    return 0.0;
+  } else {
+    return round(((current_counter - previous_counter) / (double)(current_timer - previous_timer)) * 1000 * 60);
+  }
+}
+
+/**
  * Generates the brake PWM signal according to the settings of the requested resistance
+ * 
+ * @global currentPwm       The index for the current resistance
+ * @global pwmSignalStarted Indicates if the PWM signal was already started or not
+ * @global doWait           
+ * @global wait             An array of timings in microseconds indicating when the PWM signal must start
+ * @gloabl pwms             An array containing the length of the PWM signal for each index (micros)
+ * @global PWM              The arduino pin for the signal
  * 
  * @return void
  */
@@ -418,13 +428,28 @@ void writeIndoorBikeDataCharacteristic() {
   ibdBuffer[0] = 0x00 | flagInstantaneousCadence; // More Data = 0 (instantaneous speed present), bit 2: instantaneous cadence present
   ibdBuffer[1] = 0;
 
-  int s = (int)(speed_raw * 3.6 * 100); // speed_raw is m/s. IndoorBikeData needs km/h in resolution of 0.01
+  double instantaneous_speed = calculate_speed(speed_counter, speed_counter_ibd, speed_timer, speed_timer_ibd);
+  int s = round((instantaneous_speed * 3.6 * 100)); // instantaneous_speed is m/s. IndoorBikeData needs km/h in resolution of 0.01
   ibdBuffer[2] = s & 0xFF; // Instantaneous Speed, uint16
   ibdBuffer[3] = (s >> 8) & 0xFF;
-  ibdBuffer[4] = (int)cadence_raw & 0xFF; // Instantaneous Cadence, uint16
-  ibdBuffer[5] = ((int)cadence_raw >> 8) & 0xFF;
+
+  int instantaneous_cadence = calculate_cadence(cadence_counter, cadence_counter_ibd, cadence_timer, cadence_timer_ibd);
+  ibdBuffer[4] = (int)round(instantaneous_cadence) & 0xFF; // Instantaneous Cadence, uint16
+  ibdBuffer[5] = ((int)round(instantaneous_cadence) >> 8) & 0xFF;
+
   indoorBikeDataCharacteristic.writeValue(ibdBuffer, 6);
-  if (serial_debug) Serial.println("Indoor Bike Data written");
+
+  // IBD was written, so update the values
+  speed_counter_ibd = speed_counter;
+  speed_timer_ibd = speed_timer;
+  cadence_counter_ibd = cadence_counter;
+  cadence_timer_ibd = cadence_timer;
+  
+  if (serial_debug) {
+    Serial.println("Indoor Bike Data written");
+    Serial.println(instantaneous_speed);
+    Serial.println(s);
+  }
 }
 
 /**
@@ -438,22 +463,28 @@ void writeIndoorBikeDataCharacteristic() {
 void writeCscMeasurement() {
   cscmBuffer[0] = 0b00000011; // b0: Wheel revolution data present, b1: Cranck revolution data present
 
-  speed_counter2 = speed_counter * ( BRAKE_SIZE / WHEEL_SIZE);
+  unsigned long speed_counter2 = speed_counter * ( BRAKE_SIZE / WHEEL_SIZE);
   cscmBuffer[1] = speed_counter2 & 0xFF; // Cumulative wheel revolution
   cscmBuffer[2] = (speed_counter2 >> 8) & 0xFF;
   cscmBuffer[3] = (speed_counter2 >> 16) & 0xFF;
   cscmBuffer[4] = (speed_counter2 >> 32) & 0xFF;
-
-  speed_timer_1024 = speed_last_millis / 1000 * 1024;
+  unsigned long speed_timer_1024 = speed_timer * 1000 / 1024;
   cscmBuffer[5] = speed_timer_1024 & 0xFF; // Last wheel event time
   cscmBuffer[6] = (speed_timer_1024 >> 8) & 0xFF;
   cscmBuffer[7] = cadence_counter & 0xFF; // Cumulative cranck revolution
   cscmBuffer[8] = (cadence_counter >> 8) & 0xFF;
-  cadence_timer_1024 = cadence_last_millis / 1000 * 1024;
+  unsigned long cadence_timer_1024 = cadence_timer * 1000 / 1024;
   cscmBuffer[9] = cadence_timer_1024 & 0xFF; // Last cranck event time
   cscmBuffer[10] = (cadence_timer_1024 >> 8) & 0xFF;
   
   cscMeasurementCharacteristic.writeValue(cscmBuffer, 11);
+
+  // CSC was written, so update the values
+  speed_counter_csc = speed_counter;
+  speed_timer_csc = speed_timer;
+  cadence_counter_csc = cadence_counter;
+  cadence_timer_csc = cadence_timer;
+
 }
 
 /**
@@ -610,12 +641,12 @@ void fitnessMachineControlPointCharacteristicWritten(BLEDevice central, BLEChara
 
 void speedPulseInterrupt() {
   speed_counter++;
-  // speed_timer = millis();
+  speed_timer = millis();
 }
 
 void cadencePulseInterrupt() {
   cadence_counter++;
-  // cadence_timer = millis();
+  cadence_timer = millis();
 }
 
 /**
