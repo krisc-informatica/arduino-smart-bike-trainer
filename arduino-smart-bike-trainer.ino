@@ -31,15 +31,6 @@
  *          WRITE
  *        Fitness Machine Status: 0x2ADA
  *        
- *    CSC (Cycling Speed and Cadence Sensor): 0x1816 (file:///C:/Users/krisc/Downloads/CSCP_SPEC_V10.pdf, https://www.bluetooth.com/wp-content/uploads/Sitecore-Media-Library/Gatt/Xml/Services/org.bluetooth.service.cycling_speed_and_cadence.xml)
- *      The profile specification document describes the CSC profile consisting of a Sensor which exposes two GATT services:
- *        - Cycling Speed and Cadence Service (mandatory)
- *          CSC Measurement (mandatory): 0x2A5B (11 bytes) [https://www.bluetooth.com/wp-content/uploads/Sitecore-Media-Library/Gatt/Xml/Characteristics/org.bluetooth.characteristic.csc_measurement.xml]
- *          CSC Feature (mandatory): 0x2A5C (2 bytes) [https://www.bluetooth.com/wp-content/uploads/Sitecore-Media-Library/Gatt/Xml/Characteristics/org.bluetooth.characteristic.csc_feature.xml]
- *          Sensor Location (conditional): 0x2A5D (1 byte) [https://www.bluetooth.com/wp-content/uploads/Sitecore-Media-Library/Gatt/Xml/Characteristics/org.bluetooth.characteristic.sensor_location.xml]
- *          SC Control Point (conditional): 0x2A55 [https://www.bluetooth.com/wp-content/uploads/Sitecore-Media-Library/Gatt/Xml/Characteristics/org.bluetooth.characteristic.sc_control_point.xml]
- *        - Device Information Service (optional)
- * 
  * @name   Arduino Smart Bike Trainer
  * @author Kris Cardinaels <kris@krisc-informatica.be>
  * @license MIT license <https://choosealicense.com/licenses/mit/>
@@ -49,13 +40,14 @@
  */
 #include <ArduinoBLE.h>
 
-boolean serial_debug = true; // Will write some debug information to Serial
+boolean serial_debug = false; // Will write some debug information to Serial
 
 double BRAKE_SIZE = 23.35; // Distance between two brake speed pulses
 double WHEEL_SIZE = 2100; // Circumference of the wheel, to be defined by the rider
 
-#define DEVICE_NAME_LONG "KC Tacx Flow Smart Trainer"
-#define DEVICE_NAME_SHORT "KC-TFST"
+#define DEVICE_NAME_LONG "Arduino Smart Bike Trainer"
+#define DEVICE_NAME_SHORT "ASBT"
+
 /** 
  * The Fitness Machine Control Point data type structure 
  * 
@@ -83,11 +75,9 @@ long previousControlPointEvent = 0;
 
 /**
  * Fitness Machine Service, uuid 0x1826 or 00001826-0000-1000-8000-00805F9B34FB
- * Cycling Speed and Cadence service, uuid 0x1816 or 00001816-0000-1000-8000-00805F9B34FB
  * 
  */
 BLEService fitnessMachineService("1826"); // FTMS
-BLEService cyclingSpeedAndCadenceService("1816"); // CSC
 
 // Service characteristics exposed by FTMS
 BLECharacteristic fitnessMachineFeatureCharacteristic("2ACC", BLERead, 8);                                  // Fitness Machine Feature, mandatory, read
@@ -97,13 +87,6 @@ BLECharacteristic supportedResistanceLevelRangeCharacteristic("2AD6", BLERead, 4
 BLECharacteristic fitnessMachineControlPointCharacteristic("2AD9", BLEWrite | BLEIndicate, FMCP_DATA_SIZE); // Fitness Machine Control Point, optional, write & indicate
 BLECharacteristic fitnessMachineStatusCharacteristic("2ADA", BLENotify, 2);                                 // Fitness Machine Status, mandatory, notify
 
-// Service characteristics exposed by CSC
-BLECharacteristic cscMeasurementCharacteristic("2A5B", BLENotify, 11);                                                      // CSC Measurement, mandatory, notify
-BLECharacteristic cscFeatureCharacteristic("2A5C", BLERead, 2);                                                            // CSC Feature, mandatory, read
-// BLECharacteristic sensorLocation("2A5D", BLERead, 1);                                                       // CSC Sensor Location, conditional, read
-// BLECharacteristic scControlPoint("2A55", BLEWrite | BLEIndicate, 30);                                          // CSC Control Point, conditional, write & indicate, 30 bytes chosen randomly
-
-
 // Buffers used to write to the characteristics and initial values
 unsigned char ftmfBuffer[8] = { 0b10000111, 0b01000100, 0, 0, 0, 0, 0, 0};                                  // Features: 0 (Avg speed), 1 (Cadence), 2 (Total distance), 7 (Resistance level), 10 (Heart rate measurement), 14 (Power measurement)
 unsigned char ibdBuffer[6] = {0, 0, 0, 0, 0, 0};                                                            // 
@@ -111,9 +94,6 @@ unsigned char srlrBuffer[4] = {0, 200, 0, 1};
 unsigned char ftmsBuffer[2] = {0, 0};
 unsigned char tsBuffer[2] = {0x0, 0x0};                                                                     // Training status: flags: 0 (no string present); Status: 0x00 = Other
 unsigned char ftmcpBuffer[20];
-
-unsigned char cscmBuffer[11] = {0,0,0,0,0,0,0,0,0,0,0};
-unsigned char cscfBuffer[2] = {0b00000011, 0};                                                              // Features: 0 (Wheel revolution data), 1 (Crank revolution data)
 
 /**
  * Training session
@@ -221,7 +201,6 @@ boolean pwmSignalStarted = false;                                               
 volatile unsigned long syncTime = 4294967295;                                                    // Initialised to max long
 volatile boolean doWait = true;
 
-
 /**
  * Data for the resistance calculation of the trainer
  */
@@ -277,13 +256,8 @@ void setup() {
   fitnessMachineService.addCharacteristic(supportedResistanceLevelRangeCharacteristic);
   fitnessMachineService.addCharacteristic(fitnessMachineControlPointCharacteristic);
   fitnessMachineService.addCharacteristic(fitnessMachineStatusCharacteristic);
-  // Add our AST service to the device
+  // Add our ASBT service to the device
   BLE.addService(fitnessMachineService);
-
-  BLE.setAdvertisedService(cyclingSpeedAndCadenceService);
-  cyclingSpeedAndCadenceService.addCharacteristic(cscMeasurementCharacteristic);
-  cyclingSpeedAndCadenceService.addCharacteristic(cscFeatureCharacteristic);
-  BLE.addService(cyclingSpeedAndCadenceService);
 
   // Write values to the characteristics that can be read
   fitnessMachineFeatureCharacteristic.writeValue(ftmfBuffer, 8);
@@ -291,8 +265,6 @@ void setup() {
   supportedResistanceLevelRangeCharacteristic.writeValue(srlrBuffer, 4);
   fitnessMachineStatusCharacteristic.writeValue(ftmsBuffer, 2);
   trainingStatusCharacteristic.writeValue(tsBuffer, 2);
-
-  cscFeatureCharacteristic.writeValue(cscfBuffer, 2);
 
   // Write requests to the control point characteristic are handled by an event handler
   fitnessMachineControlPointCharacteristic.setEventHandler(BLEWritten, fitnessMachineControlPointCharacteristicWritten);
@@ -307,7 +279,6 @@ void setup() {
   pinMode(CADENCE, INPUT);
   attachInterrupt(digitalPinToInterrupt(SPEED), speedPulseInterrupt, FALLING);
   attachInterrupt(digitalPinToInterrupt(CADENCE), cadencePulseInterrupt, RISING);
-
 
   // Initialize training to stopped
   training_status = STOPPED;
@@ -332,9 +303,6 @@ void loop() {
       }
           
       writeIndoorBikeDataCharacteristic();
-      writeCscMeasurement();
-      // writeTrainingStatus(); // Training Status shall be notified when there is a transition in the training program
-      // writeFitnessMachineStatus(); // Fitness Machine Status shall be notified when a chane happened, not at regular interval
       previous_notification = millis();
     }
   }
@@ -342,7 +310,7 @@ void loop() {
   instantaneous_speed = calculate_speed(speed_counter, speed_counter_ibd, speed_timer, speed_timer_ibd);
 
   // Write correct resistance level to the brake, only if riding at a minimum speed (1 m/s or 3.6 km/h)
-  if (instantaneous_speed >= 1) {
+  if (instantaneous_speed >= 0.5) {
     // Calculate resistance needed, given in currentPwm
     int currentPwm = setTrainerResistance(wind_speed, grade, crr, cw);
     // generate PWM based on trainer_resistance
@@ -366,7 +334,7 @@ void loop() {
  * @return double
  */
 double calculate_speed(unsigned long current_counter, unsigned long previous_counter, unsigned long current_timer, unsigned long previous_timer) {
-  if (current_timer - previous_timer > 5000) {
+  if ((current_timer == previous_timer) || current_timer - previous_timer > 5000) {
     return 0.0;
   } else {
     return (current_counter - previous_counter) * BRAKE_SIZE / (double)(current_timer - previous_timer);
@@ -385,7 +353,7 @@ double calculate_speed(unsigned long current_counter, unsigned long previous_cou
 
  */
 unsigned int calculate_cadence(unsigned long current_counter, unsigned long previous_counter, unsigned long current_timer, unsigned long previous_timer) {
-  if (current_timer - previous_timer > 5000) {
+  if ((current_timer == previous_timer) || current_timer - previous_timer > 5000) {
     return 0.0;
   } else {
     return round(((current_counter - previous_counter) / (double)(current_timer - previous_timer)) * 1000 * 60);
@@ -433,9 +401,22 @@ void writeIndoorBikeDataCharacteristic() {
   ibdBuffer[2] = s & 0xFF; // Instantaneous Speed, uint16
   ibdBuffer[3] = (s >> 8) & 0xFF;
 
-  int instantaneous_cadence = calculate_cadence(cadence_counter, cadence_counter_ibd, cadence_timer, cadence_timer_ibd);
+  int instantaneous_cadence = calculate_cadence(cadence_counter, cadence_counter_ibd, cadence_timer, cadence_timer_ibd) * 2; // Cadence should be multiplide by 2
   ibdBuffer[4] = (int)round(instantaneous_cadence) & 0xFF; // Instantaneous Cadence, uint16
   ibdBuffer[5] = ((int)round(instantaneous_cadence) >> 8) & 0xFF;
+
+  Serial.print(ibdBuffer[0]);
+  Serial.print(" ");
+  Serial.print(ibdBuffer[1]);
+  Serial.print(" ");
+  Serial.print(ibdBuffer[2]);
+  Serial.print(" ");
+  Serial.print(ibdBuffer[3]);
+  Serial.print(" ");
+  Serial.print(ibdBuffer[4]);
+  Serial.print(" ");
+  Serial.print(ibdBuffer[5]);
+  Serial.println();
 
   indoorBikeDataCharacteristic.writeValue(ibdBuffer, 6);
 
@@ -450,41 +431,6 @@ void writeIndoorBikeDataCharacteristic() {
     Serial.println(instantaneous_speed);
     Serial.println(s);
   }
-}
-
-/**
- * Writes the CSC Measurement characteristic. The speed information must be given in cumulative wheel revolutions.
- * The trainer value speed_counter is the cumulative brake revolutions (4 pulses per revolution).
- * The wheel revs = speed_counter2 = speed_counter X brake_size/wheel_size
- * Times must be given 1/1024 of a second
- * 
- * @return void
- */
-void writeCscMeasurement() {
-  cscmBuffer[0] = 0b00000011; // b0: Wheel revolution data present, b1: Cranck revolution data present
-
-  unsigned long speed_counter2 = speed_counter * ( BRAKE_SIZE / WHEEL_SIZE);
-  cscmBuffer[1] = speed_counter2 & 0xFF; // Cumulative wheel revolution
-  cscmBuffer[2] = (speed_counter2 >> 8) & 0xFF;
-  cscmBuffer[3] = (speed_counter2 >> 16) & 0xFF;
-  cscmBuffer[4] = (speed_counter2 >> 32) & 0xFF;
-  unsigned long speed_timer_1024 = speed_timer * 1000 / 1024;
-  cscmBuffer[5] = speed_timer_1024 & 0xFF; // Last wheel event time
-  cscmBuffer[6] = (speed_timer_1024 >> 8) & 0xFF;
-  cscmBuffer[7] = cadence_counter & 0xFF; // Cumulative cranck revolution
-  cscmBuffer[8] = (cadence_counter >> 8) & 0xFF;
-  unsigned long cadence_timer_1024 = cadence_timer * 1000 / 1024;
-  cscmBuffer[9] = cadence_timer_1024 & 0xFF; // Last cranck event time
-  cscmBuffer[10] = (cadence_timer_1024 >> 8) & 0xFF;
-  
-  cscMeasurementCharacteristic.writeValue(cscmBuffer, 11);
-
-  // CSC was written, so update the values
-  speed_counter_csc = speed_counter;
-  speed_timer_csc = speed_timer;
-  cadence_counter_csc = cadence_counter;
-  cadence_timer_csc = cadence_timer;
-
 }
 
 /**
