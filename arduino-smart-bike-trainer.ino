@@ -108,19 +108,19 @@ unsigned long training_elapsed;
  * Indoor Bike Data characteristic variables
  * 
  */
-const uint8_t flagMoreData = 1;
-const uint8_t flagAverageSpeed = 2;
-const uint8_t flagInstantaneousCadence = 4;
-const uint8_t flagAverageCadence = 8;
-const uint8_t flagTotalDistance = 16;
-const uint8_t flagResistanceLevel = 32;
-const uint8_t flagIntantaneousPower = 64;
-const uint8_t flagAveragePower = 128;
-const uint8_t flagExpendedEnergy = 256;
-const uint8_t flagHeartRate = 512;
-const uint8_t flagMetabolicEquivalent = 1024;
-const uint8_t flagElapsedTime = 2048;
-const uint8_t flagRemainingTime = 4096;
+const uint16_t flagMoreData = 1;
+const uint16_t flagAverageSpeed = 2;
+const uint16_t flagInstantaneousCadence = 4;
+const uint16_t flagAverageCadence = 8;
+const uint16_t flagTotalDistance = 16;
+const uint16_t flagResistanceLevel = 32;
+const uint16_t flagIntantaneousPower = 64;
+const uint16_t flagAveragePower = 128;
+const uint16_t flagExpendedEnergy = 256;
+const uint16_t flagHeartRate = 512;
+const uint16_t flagMetabolicEquivalent = 1024;
+const uint16_t flagElapsedTime = 2048;
+const uint16_t flagRemainingTime = 4096;
 
 /**
  * Fitness Machine Control Point opcodes 
@@ -312,7 +312,7 @@ void loop() {
   // Write correct resistance level to the brake, only if riding at a minimum speed (1 m/s or 3.6 km/h)
   if (instantaneous_speed >= 0.5) {
     // Calculate resistance needed, given in currentPwm
-    int currentPwm = setTrainerResistance(wind_speed, grade, crr, cw);
+    currentPwm = setTrainerResistance(wind_speed, grade, crr, cw);
     // generate PWM based on trainer_resistance
     generatePwmSignal();
   }
@@ -373,7 +373,7 @@ unsigned int calculate_cadence(unsigned long current_counter, unsigned long prev
  * @return void
  */
 void generatePwmSignal() {
-  long n = micros();
+  unsigned long n = micros();
   if (!pwmSignalStarted && !doWait && (n >= syncTime + wait[currentPwm]*1000)) {
       digitalWrite(PWM, HIGH);
       pwmSignalStarted = true;
