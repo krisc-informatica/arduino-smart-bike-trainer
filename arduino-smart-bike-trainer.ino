@@ -405,19 +405,6 @@ void writeIndoorBikeDataCharacteristic() {
   ibdBuffer[4] = (int)round(instantaneous_cadence) & 0xFF; // Instantaneous Cadence, uint16
   ibdBuffer[5] = ((int)round(instantaneous_cadence) >> 8) & 0xFF;
 
-  Serial.print(ibdBuffer[0]);
-  Serial.print(" ");
-  Serial.print(ibdBuffer[1]);
-  Serial.print(" ");
-  Serial.print(ibdBuffer[2]);
-  Serial.print(" ");
-  Serial.print(ibdBuffer[3]);
-  Serial.print(" ");
-  Serial.print(ibdBuffer[4]);
-  Serial.print(" ");
-  Serial.print(ibdBuffer[5]);
-  Serial.println();
-
   indoorBikeDataCharacteristic.writeValue(ibdBuffer, 6);
 
   // IBD was written, so update the values
@@ -428,8 +415,6 @@ void writeIndoorBikeDataCharacteristic() {
   
   if (serial_debug) {
     Serial.println("Indoor Bike Data written");
-    Serial.println(instantaneous_speed);
-    Serial.println(s);
   }
 }
 
@@ -457,7 +442,9 @@ void writeTrainingStatus() {
       break;
   }
   
-  Serial.println("Training Status written");
+  if (serial_debug) {
+    Serial.println("Training Status written");
+  }
 }
 
 /**
@@ -482,68 +469,68 @@ void handleControlPoint() {
     for (int i=0; i<fmcpValueLength-1; i++) Serial.println(fmcpData.values.OCTETS[i], HEX);
     Serial.println();
   }
-    switch(fmcpData.values.OPCODE) {
-      case fmcpRequestControl: {
-        // Always allow control
-        ftmcpBuffer[0] = fmcpResponseCode;
-        ftmcpBuffer[1] = fmcpData.values.OPCODE;
-        ftmcpBuffer[2] =  0x01;
-        fitnessMachineControlPointCharacteristic.writeValue(ftmcpBuffer, 3);
-        break;
-      }
-      case fmcpStartOrResume: {
-        training_status = RUNNING;
-        break;
-      }
-      case fmcpStopOrPause: {
-        training_status = STOPPED;
-        break;
-      }
-      case fmcpSetIndoorBikeSimulationParameters: {
-        wind_speed = fmcpData.values.OCTETS[0] + (fmcpData.values.OCTETS[1] * 256);
-        grade = fmcpData.values.OCTETS[2] + (fmcpData.values.OCTETS[3] * 256);
-        crr = fmcpData.values.OCTETS[4];
-        cw = fmcpData.values.OCTETS[5];
-        if (serial_debug) {
-          Serial.print("Wind speed (1000): "); Serial.println((int)(wind_speed));
-          Serial.print("Grade (100): "); Serial.println((int)grade);
-          Serial.print("Crr (10000): "); Serial.println((int)crr);
-          Serial.print("Cw (100): "); Serial.println((int)cw);
-        }
-                
-        setTrainerResistance(wind_speed, grade, crr, cw);
-        
-        ftmcpBuffer[0] = fmcpResponseCode;
-        ftmcpBuffer[1] = fmcpData.values.OPCODE;
-        ftmcpBuffer[2] =  0x01;
-        fitnessMachineControlPointCharacteristic.writeValue(ftmcpBuffer, 3);
-        break;
-      }
-      case fmcpReset:
-      case fmcpSetTargetResistanceLevel:
-      case fmcpSetTargetSpeed:
-      case fmcpSetTargetInclination:
-      case fmcpSetTargetPower:
-      case fmcpSetTargetHeartRate:
-      case fmcpSetTargetedExpendedEngery:
-      case fmcpSetTargetedNumberOfSteps:
-      case fmcpSetTargetedNumberOfStrided:
-      case fmcpSetTargetedDistance:
-      case fmcpSetTargetedTrainingTime:
-      case fmcpSetTargetedTimeInTwoHeartRateZones:
-      case fmcpSetTargetedTimeInThreeHeartRateZones:
-      case fmcpSetTargetedTimeInFiveHeartRateZones:
-      case fmcpSetWheelCircumference:
-      case fmcpSetSpinDownControl:
-      case fmcpSetTargetedCadence: {
-        ftmcpBuffer[0] = fmcpResponseCode;
-        ftmcpBuffer[1] = fmcpData.values.OPCODE;
-        ftmcpBuffer[2] =  0x02; // OpCode not supported for now
-        if (serial_debug) Serial.print("Unsupported OpCode received");
-        fitnessMachineControlPointCharacteristic.writeValue(ftmcpBuffer, 3);
-        break;
-      }
+  switch(fmcpData.values.OPCODE) {
+    case fmcpRequestControl: {
+      // Always allow control
+      ftmcpBuffer[0] = fmcpResponseCode;
+      ftmcpBuffer[1] = fmcpData.values.OPCODE;
+      ftmcpBuffer[2] =  0x01;
+      fitnessMachineControlPointCharacteristic.writeValue(ftmcpBuffer, 3);
+      break;
     }
+    case fmcpStartOrResume: {
+      training_status = RUNNING;
+      break;
+    }
+    case fmcpStopOrPause: {
+      training_status = STOPPED;
+      break;
+    }
+    case fmcpSetIndoorBikeSimulationParameters: {
+      wind_speed = fmcpData.values.OCTETS[0] + (fmcpData.values.OCTETS[1] * 256);
+      grade = fmcpData.values.OCTETS[2] + (fmcpData.values.OCTETS[3] * 256);
+      crr = fmcpData.values.OCTETS[4];
+      cw = fmcpData.values.OCTETS[5];
+      if (serial_debug) {
+        Serial.print("Wind speed (1000): "); Serial.println((int)(wind_speed));
+        Serial.print("Grade (100): "); Serial.println((int)grade);
+        Serial.print("Crr (10000): "); Serial.println((int)crr);
+        Serial.print("Cw (100): "); Serial.println((int)cw);
+      }
+              
+      setTrainerResistance(wind_speed, grade, crr, cw);
+      
+      ftmcpBuffer[0] = fmcpResponseCode;
+      ftmcpBuffer[1] = fmcpData.values.OPCODE;
+      ftmcpBuffer[2] =  0x01;
+      fitnessMachineControlPointCharacteristic.writeValue(ftmcpBuffer, 3);
+      break;
+    }
+    case fmcpReset:
+    case fmcpSetTargetResistanceLevel:
+    case fmcpSetTargetSpeed:
+    case fmcpSetTargetInclination:
+    case fmcpSetTargetPower:
+    case fmcpSetTargetHeartRate:
+    case fmcpSetTargetedExpendedEngery:
+    case fmcpSetTargetedNumberOfSteps:
+    case fmcpSetTargetedNumberOfStrided:
+    case fmcpSetTargetedDistance:
+    case fmcpSetTargetedTrainingTime:
+    case fmcpSetTargetedTimeInTwoHeartRateZones:
+    case fmcpSetTargetedTimeInThreeHeartRateZones:
+    case fmcpSetTargetedTimeInFiveHeartRateZones:
+    case fmcpSetWheelCircumference:
+    case fmcpSetSpinDownControl:
+    case fmcpSetTargetedCadence: {
+      ftmcpBuffer[0] = fmcpResponseCode;
+      ftmcpBuffer[1] = fmcpData.values.OPCODE;
+      ftmcpBuffer[2] =  0x02; // OpCode not supported for now
+      if (serial_debug) Serial.print("Unsupported OpCode received");
+      fitnessMachineControlPointCharacteristic.writeValue(ftmcpBuffer, 3);
+      break;
+    }
+  }
 }
 
 /*
