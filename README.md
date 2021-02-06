@@ -30,10 +30,3 @@ According to [https://hackaday.io/project/164276-tacx-flow-ant-conversion](https
     * Fitness Machine Control Point: 0x2AD9
       WRITE
     * Fitness Machine Status: 0x2ADA
-    
-@name   Arduino Smart Bike Trainer
-@author Kris Cardinaels <kris@krisc-informatica.be>
-@license MIT license <https://choosealicense.com/licenses/mit/>
-@link krisc-informatica.be <https://www.krisc-informatica.be/tacx-flow-arduino-smart-trainer/>
-@link Tacx Flow Ant+ Conversion <https://hackaday.io/project/164276-tacx-flow-ant-conversion>
-@link Bicycle Odometer and Speedometer <https://create.arduino.cc/projecthub/alan_dewindt/bicycle-odometer-and-speedometer-with-99-lap-period-recorder-331d2b>
