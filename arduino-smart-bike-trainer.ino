@@ -2,8 +2,8 @@
 
 boolean serial_debug = false; // Will write some debug information to Serial
 
-double BRAKE_SIZE = 23.35; // Distance between two brake speed pulses
-double WHEEL_SIZE = 2100; // Circumference of the wheel, to be defined by the rider
+double BRAKE_SIZE = 23.35; // Distance between two brake speed pulses in mm.
+double WHEEL_SIZE = 2100; // Circumference of the wheel, to be defined by the rider, in mm.
 
 #define DEVICE_NAME_LONG "Arduino Smart Bike Trainer"
 #define DEVICE_NAME_SHORT "ASBT"
