@@ -1,6 +1,9 @@
-#include <ArduinoBLE.h>
 
-boolean serial_debug = false; // Will write some debug information to Serial
+#include <ArduinoBLE.h>
+#include <math.h>
+
+boolean serial_debug = true; // Will write some debug information to Serial
+boolean write_startup_message = true;
 
 double BRAKE_SIZE = 23.35; // Distance between two brake speed pulses in mm.
 double WHEEL_SIZE = 2100; // Circumference of the wheel, to be defined by the rider, in mm.
@@ -41,18 +44,18 @@ BLEService fitnessMachineService("1826"); // FTMS
 
 // Service characteristics exposed by FTMS
 BLECharacteristic fitnessMachineFeatureCharacteristic("2ACC", BLERead, 8);                                  // Fitness Machine Feature, mandatory, read
-BLECharacteristic indoorBikeDataCharacteristic("2AD2", BLENotify, 6);                                       // Indoor Bike Data, optional, notify
+BLECharacteristic indoorBikeDataCharacteristic("2AD2", BLENotify, 8);                                       // Indoor Bike Data, optional, notify
 BLECharacteristic trainingStatusCharacteristic("2AD3", BLENotify | BLERead, 20);                            // Training Status, optional, read & notify
 BLECharacteristic supportedResistanceLevelRangeCharacteristic("2AD6", BLERead, 4);                          // Supported Resistance Level, read, optional
 BLECharacteristic fitnessMachineControlPointCharacteristic("2AD9", BLEWrite | BLEIndicate, FMCP_DATA_SIZE); // Fitness Machine Control Point, optional, write & indicate
 BLECharacteristic fitnessMachineStatusCharacteristic("2ADA", BLENotify, 2);                                 // Fitness Machine Status, mandatory, notify
 
 // Buffers used to write to the characteristics and initial values
-unsigned char ftmfBuffer[8] = { 0b10000111, 0b01000100, 0, 0, 0, 0, 0, 0};                                  // Features: 0 (Avg speed), 1 (Cadence), 2 (Total distance), 7 (Resistance level), 10 (Heart rate measurement), 14 (Power measurement)
-unsigned char ibdBuffer[6] = {0, 0, 0, 0, 0, 0};                                                            // 
-unsigned char srlrBuffer[4] = {0, 200, 0, 1};
-unsigned char ftmsBuffer[2] = {0, 0};
-unsigned char tsBuffer[2] = {0x0, 0x0};                                                                     // Training status: flags: 0 (no string present); Status: 0x00 = Other
+unsigned char ftmfBuffer[4] = { 0b10000111, 0b01000000, 0, 0 }; //, 0, 0, 0, 0};                            // Features: 0 (Avg speed), 1 (Cadence), 2 (Total distance), 7 (Resistance level), 10 (Heart rate measurement), 14 (Power measurement)
+unsigned char ibdBuffer[8]  = { 0, 0, 0, 0, 0, 0, 0, 0};
+unsigned char srlrBuffer[4] = { 0, 200, 0, 1};                                                              // Supported Resistance Level Range
+unsigned char ftmsBuffer[2] = { 0, 0};
+unsigned char tsBuffer[2]   = { 0x0, 0x0};                                                                  // Training status: flags: 0 (no string present); Status: 0x00 = Other
 unsigned char ftmcpBuffer[20];
 
 /**
@@ -127,36 +130,38 @@ const short NOTIFICATION_INTERVAL = 1000;
 long previous_notification = 0;
 
 /**
- * Speed and Cadence sensors
+ * Speed and Cadence sensor pins
  */
 #define SPEED   2
 #define CADENCE 3
 #define PWM     4
 #define SYNC    12
 
-volatile unsigned long speed_counter = 0;              // The incrementing counter of speed pulses from the brake
-volatile unsigned long speed_timer = 0;                  // The last speed interrupt time
-unsigned long speed_counter_ibd = 0;              // The previous amount of speed pulses written to indoor bike data
-unsigned long speed_counter_csc =0;              // The previous amount of speed pulses written to CSC measurement
+volatile unsigned long speed_counter = 0;   // The incrementing counter of speed pulses from the brake
+volatile unsigned long speed_timer = 0;     // The last speed interrupt time
+unsigned long speed_counter_ibd = 0;        // The previous amount of speed pulses written to indoor bike data
+unsigned long speed_counter_csc =0;         // The previous amount of speed pulses written to CSC measurement
 unsigned long speed_timer_ibd = 0;          // The previous time written to ibd
 unsigned long speed_timer_csc = 0;          // The previous time written to csc
 double instantaneous_speed = 0;             // Global variable to hold the calculated speed
 
-volatile unsigned long cadence_counter = 0;            // The incrementing counter of cranck revolutions
-volatile unsigned long cadence_timer;
-unsigned long cadence_counter_ibd = 0;
-unsigned long cadence_counter_csc = 0;
-unsigned long cadence_timer_ibd = 0;
-unsigned long cadence_timer_csc = 0;
-unsigned int instantaneous_cadence = 0;
+volatile unsigned long cadence_counter = 0; // The incrementing counter of cranck revolutions
+volatile unsigned long cadence_timer;       // The last cadence interrupt time
+unsigned long cadence_counter_ibd = 0;      // The previous amount of cadence pulses written to indoor bike data
+unsigned long cadence_counter_csc = 0;      // The previous amount of cadence pulses wirtten to CSC measurement
+unsigned long cadence_timer_ibd = 0;        // The previous time written to ibd
+unsigned long cadence_timer_csc = 0;        // The previous time written to csc
+unsigned int instantaneous_cadence = 0;     // Global variable to hold the calculated cadence
+unsigned int instantaneous_power = 0;       // Global variable to hold the calculated power
 
 /**
  * PWM Signal
  */
-int pwms[14] = {4200, 3300, 2600, 2100, 1600, 1100, 660, 200, 500, 960, 1400, 1880, 2400, 2940}; // Duration of brake PWM signal in microseconds
-int currentPwm = 8;                                                                              // Starting resistance
-int wait[14] = {10, 10, 10, 10, 10, 10, 10, 10, 0, 0, 0, 0, 0, 0};                               // Delay in milliseconds for the PWM: 0 in rising part of signal, 10 in falling part of signal
-boolean pwmSignalStarted = false;                                                                   // In the loop we have to know whether the pwm signal was started or not
+int currentPwm = 5;                                                                              // Starting resistance
+//              0     1     2     3     4     5     6    7    8    9    10    11    12    13
+int pwms[14] = {4200, 3300, 2600, 2100, 1600, 1100, 660, 200, 500, 960, 1400, 1880, 2400, 3940}; // Duration of brake PWM signal in microseconds
+int wait[14] = {11,   11,   11,   11,   11,   11,   11,  1,   1,   1,   1,    1,    1,    1};    // Delay in milliseconds for the PWM: 0 in rising part of signal, 10 in falling part of signal
+boolean pwmSignalStarted = false;                                                                // In the loop we need to know whether the pwm signal was started or not
 
 volatile unsigned long syncTime = 4294967295;                                                    // Initialised to max long
 volatile boolean doWait = true;
@@ -169,21 +174,37 @@ float grade = 0;            // percentage, resolution 0.01
 float crr = 0;              // Coefficient of rolling resistance, resolution 0.0001
 float cw = 0;               // Wind resistance Kg/m, resolution 0.01;
 
-float weight = 95;
+float weight = 95;            // The rider's weight in kg
 float trainer_resistance = 0; // To be mapped to the correct value for the trainer
 
 // General variables
 long current_millis;
 
+/**
+ * Helper function to highlight the RGB Led with a certain colour specified in RGB spectrum
+ * 
+ * @param int red   The red colour component
+ * @param int green The green colour component
+ * @param int blue  The blue colour component
+ * 
+ * @return void
+ */
 void writeStatus(int red, int green, int blue) {
   analogWrite(RED, red);
   analogWrite(GREEN, green);
   analogWrite(BLUE, blue);
 }
 
+/**
+ * Arduino setup procedure
+ * 
+ * @return void
+ */
 void setup() {
-  if (serial_debug) Serial.begin(115200);
-  randomSeed(analogRead(0)); // For testing purposes of speed and cadence
+  if (serial_debug) {
+    Serial.begin(115200);
+  }
+  // randomSeed(analogRead(0)); // For testing purposes of speed and cadence
 
   pinMode(RED, OUTPUT);
   pinMode(GREEN, OUTPUT);
@@ -193,11 +214,15 @@ void setup() {
   pinMode(SYNC, INPUT);
   pinMode(PWM, OUTPUT);
   pwmSignalStarted = false;
-  currentPwm = 8;
+  currentPwm = 5;
   digitalWrite(PWM, LOW);
   attachInterrupt(digitalPinToInterrupt(SYNC), syncSignal, RISING);
 
   if (!BLE.begin()) { // Error starting the bluetooth module
+    if (serial_debug) {
+      Serial.println("Error initiliazing bluetooth module, please restart");
+    }
+
     while (1) {
       writeStatus(0, 1024, 1024);
       delay(250);
@@ -220,8 +245,8 @@ void setup() {
   BLE.addService(fitnessMachineService);
 
   // Write values to the characteristics that can be read
-  fitnessMachineFeatureCharacteristic.writeValue(ftmfBuffer, 8);
-  indoorBikeDataCharacteristic.writeValue(ibdBuffer, 6);
+  fitnessMachineFeatureCharacteristic.writeValue(ftmfBuffer, 4);
+  indoorBikeDataCharacteristic.writeValue(ibdBuffer, 8);
   supportedResistanceLevelRangeCharacteristic.writeValue(srlrBuffer, 4);
   fitnessMachineStatusCharacteristic.writeValue(ftmsBuffer, 2);
   trainingStatusCharacteristic.writeValue(tsBuffer, 2);
@@ -231,6 +256,7 @@ void setup() {
 
   // start advertising
   BLE.advertise();
+
   BLE.setEventHandler(BLEConnected, blePeripheralConnectHandler);
   BLE.setEventHandler(BLEDisconnected, blePeripheralDisconnectHandler);
 
@@ -246,7 +272,23 @@ void setup() {
   training_elapsed = 0;
 }
 
+/**
+ * Arduino loop
+ * 
+ * @return void
+ */
 void loop() {
+  if (serial_debug && write_startup_message) {
+    Serial.print(DEVICE_NAME_LONG);
+    Serial.println(" (");
+    Serial.print(DEVICE_NAME_SHORT);
+    Serial.println(")");
+
+    Serial.println("No BLE connection");
+    Serial.println("BLE advertisement started");
+    Serial.println("Speed + Cadence pin interrupts attached");
+    write_startup_message = false;
+  }
   BLE.poll();
 
   central = BLE.central();
@@ -353,10 +395,11 @@ void generatePwmSignal() {
  * @return void
  */
 void writeIndoorBikeDataCharacteristic() {
-  ibdBuffer[0] = 0x00 | flagInstantaneousCadence; // More Data = 0 (instantaneous speed present), bit 2: instantaneous cadence present
+  ibdBuffer[0] = 0x00 | flagInstantaneousCadence | flagIntantaneousPower; // More Data = 0 (instantaneous speed present), bit 2: instantaneous cadence present
   ibdBuffer[1] = 0;
 
   double instantaneous_speed = calculate_speed(speed_counter, speed_counter_ibd, speed_timer, speed_timer_ibd);
+  double sp = calculate_speed(speed_counter, speed_counter_ibd, speed_timer, speed_timer_ibd);
   int s = round((instantaneous_speed * 3.6 * 100)); // instantaneous_speed is m/s. IndoorBikeData needs km/h in resolution of 0.01
   ibdBuffer[2] = s & 0xFF; // Instantaneous Speed, uint16
   ibdBuffer[3] = (s >> 8) & 0xFF;
@@ -365,7 +408,17 @@ void writeIndoorBikeDataCharacteristic() {
   ibdBuffer[4] = (int)round(instantaneous_cadence) & 0xFF; // Instantaneous Cadence, uint16
   ibdBuffer[5] = ((int)round(instantaneous_cadence) >> 8) & 0xFF;
 
-  indoorBikeDataCharacteristic.writeValue(ibdBuffer, 6);
+  Serial.println("****");
+  Serial.println(sp);
+  grade = 1; Serial.println(grade);
+  Serial.println(weight);
+  crr = 0.005; Serial.println(crr);
+  instantaneous_power = sp * ( (weight * 9.81 * sin(atan(grade/100))) + (crr * weight * 9.81 * cos(atan(grade/100))) );
+  Serial.println(instantaneous_power);
+  ibdBuffer[6] = (int)round(instantaneous_power) & 0xFF; // Instantaneous Power, uint16
+  ibdBuffer[7] = ((int)round(instantaneous_power) >> 8) & 0xFF;
+  
+  indoorBikeDataCharacteristic.writeValue(ibdBuffer, 8);
 
   // IBD was written, so update the values
   speed_counter_ibd = speed_counter;
