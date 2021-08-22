@@ -515,15 +515,13 @@ void handleControlPoint() {
       break;
     }
     case fmcpSetIndoorBikeSimulationParameters: {
-      // wind_speed = fmcpData.values.OCTETS[0] + (fmcpData.values.OCTETS[1] * 256);
-      short ws = (fmcpData.values.OCTETS[0] << 8) + fmcpData.values.OCTETS[1];
+      short ws = (fmcpData.values.OCTETS[0] << 8) + fmcpData.values.OCTETS[1]; // Short is 16 bit signed, so the windspeed is converted from two bytes to signed value. Highest bit is sign bit
       wind_speed = ws;
-      // grade = fmcpData.values.OCTETS[2] + (fmcpData.values.OCTETS[3] * 256);
-      short gr = (fmcpData.values.OCTETS[3] << 8) + fmcpData.values.OCTETS[2];
+      short gr = (fmcpData.values.OCTETS[3] << 8) + fmcpData.values.OCTETS[2]; // Short is 16 bit signed, so a negative grade is correctly converted from two bytes to signed value. Highest bit is sign bit
       grade = gr;
       crr = fmcpData.values.OCTETS[4];
       cw = fmcpData.values.OCTETS[5];
-      if (serial_debug) {
+      if (serial_debug) { // Remember, if debugging with Zwift, that these values are divided by 2 if in normal settings!
         Serial.print("Wind speed (1000): "); Serial.println(wind_speed);
         Serial.print("Grade (100): "); Serial.println(grade);
         Serial.print("Crr (10000): "); Serial.println((int)crr);
