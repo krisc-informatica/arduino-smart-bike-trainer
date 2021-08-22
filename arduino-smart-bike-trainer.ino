@@ -429,8 +429,11 @@ void writeIndoorBikeDataCharacteristic() {
 
   // See: https://www.omnicalculator.com/sports/cycling-wattage
   // P = (Fg + Fr + Fa) * v / (1 - loss)
-  // Simplified formula used below: speed * (Fg + Fr)
-  instantaneous_power = sp * ( (weight * 9.81 * sin(atan(grade/100))) + (crr * weight * 9.81 * cos(atan(grade/100))) );
+
+  int ELEVATION = 40; // Some value for the elevation above sea level.
+  double rho = 1.225 * exp(-0.00011856 * ELEVATION);
+  float cdA = 0.324; // The coefficient when holding steer on hoods
+  instantaneous_power = sp * ( (weight * 9.80655 * sin(atan(grade/100))) + (crr * weight * 9.80655 * cos(atan(grade/100))) + (0.5 * cdA * rho * pow(sp + wind_speed, 2)) );
   ibdBuffer[6] = (int)round(instantaneous_power) & 0xFF; // Instantaneous Power, uint16
   ibdBuffer[7] = ((int)round(instantaneous_power) >> 8) & 0xFF;
   
