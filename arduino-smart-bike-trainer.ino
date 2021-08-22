@@ -419,20 +419,17 @@ void writeIndoorBikeDataCharacteristic() {
   instantaneous_speed = calculate_speed(speed_counter, speed_counter_ibd, speed_timer, speed_timer_ibd);
   double sp = calculate_speed(speed_counter, speed_counter_ibd, speed_timer, speed_timer_ibd);
   int s = round((instantaneous_speed * 3.6 * 100)); // instantaneous_speed is m/s. IndoorBikeData needs km/h in resolution of 0.01
-  s = 3000;
   ibdBuffer[2] = s & 0xFF; // Instantaneous Speed, uint16
   ibdBuffer[3] = (s >> 8) & 0xFF;
 
   // int instantaneous_cadence = calculate_cadence(cadence_counter, cadence_counter_ibd, cadence_timer, cadence_timer_ibd) * 2; // Cadence should be multiplde by 2
   instantaneous_cadence = calculate_cadence_from_timer(cadence_previous_timer, cadence_timer) * 2;
-  instantaneous_cadence = 95;
   ibdBuffer[4] = (int)round(instantaneous_cadence) & 0xFF; // Instantaneous Cadence, uint16
   ibdBuffer[5] = ((int)round(instantaneous_cadence) >> 8) & 0xFF;
 
   //grade = 1; Serial.println(grade);
   //crr = 0.005; Serial.println(crr);
   instantaneous_power = sp * ( (weight * 9.81 * sin(atan(grade/100))) + (crr * weight * 9.81 * cos(atan(grade/100))) );
-  instantaneous_power = 220;
   ibdBuffer[6] = (int)round(instantaneous_power) & 0xFF; // Instantaneous Power, uint16
   ibdBuffer[7] = ((int)round(instantaneous_power) >> 8) & 0xFF;
   
