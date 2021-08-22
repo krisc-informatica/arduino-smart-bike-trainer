@@ -427,8 +427,7 @@ void writeIndoorBikeDataCharacteristic() {
   ibdBuffer[4] = (int)round(instantaneous_cadence) & 0xFF; // Instantaneous Cadence, uint16
   ibdBuffer[5] = ((int)round(instantaneous_cadence) >> 8) & 0xFF;
 
-  //grade = 1; Serial.println(grade);
-  //crr = 0.005; Serial.println(crr);
+  // See: https://www.omnicalculator.com/sports/cycling-wattage
   instantaneous_power = sp * ( (weight * 9.81 * sin(atan(grade/100))) + (crr * weight * 9.81 * cos(atan(grade/100))) );
   ibdBuffer[6] = (int)round(instantaneous_power) & 0xFF; // Instantaneous Power, uint16
   ibdBuffer[7] = ((int)round(instantaneous_power) >> 8) & 0xFF;
