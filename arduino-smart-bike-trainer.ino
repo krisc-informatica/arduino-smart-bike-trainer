@@ -1,4 +1,3 @@
-
 #include <ArduinoBLE.h>
 #include <math.h>
 
@@ -146,7 +145,8 @@ unsigned long speed_timer_csc = 0;          // The previous time written to csc
 double instantaneous_speed = 0;             // Global variable to hold the calculated speed
 
 volatile unsigned long cadence_counter = 0; // The incrementing counter of cranck revolutions
-volatile unsigned long cadence_timer;       // The last cadence interrupt time
+volatile unsigned long cadence_timer = 0;       // The last cadence interrupt time
+volatile unsigned long cadence_previous_timer = 0;   // The moment (in millis) of the previous cadence event
 unsigned long cadence_counter_ibd = 0;      // The previous amount of cadence pulses written to indoor bike data
 unsigned long cadence_counter_csc = 0;      // The previous amount of cadence pulses wirtten to CSC measurement
 unsigned long cadence_timer_ibd = 0;        // The previous time written to ibd
@@ -159,7 +159,7 @@ unsigned int instantaneous_power = 0;       // Global variable to hold the calcu
  */
 int currentPwm = 5;                                                                              // Starting resistance
 //              0     1     2     3     4     5     6    7    8    9    10    11    12    13
-int pwms[14] = {4200, 3300, 2600, 2100, 1600, 1100, 660, 200, 500, 960, 1400, 1880, 2400, 3940}; // Duration of brake PWM signal in microseconds
+int pwms[14] = {4200, 3300, 2600, 2100, 1600, 1100, 580, 280, 840, 1400, 1940, 2500, 3180, 4100}; // Duration of brake PWM signal in microseconds
 int wait[14] = {11,   11,   11,   11,   11,   11,   11,  1,   1,   1,   1,    1,    1,    1};    // Delay in milliseconds for the PWM: 0 in rising part of signal, 10 in falling part of signal
 boolean pwmSignalStarted = false;                                                                // In the loop we need to know whether the pwm signal was started or not
 
@@ -202,7 +202,13 @@ void writeStatus(int red, int green, int blue) {
  */
 void setup() {
   if (serial_debug) {
-    Serial.begin(115200);
+    Serial.begin(9600);
+    while (!Serial);
+    Serial.print(DEVICE_NAME_LONG);
+    Serial.print(" (");
+    Serial.print(DEVICE_NAME_SHORT);
+    Serial.println(")");
+
   }
   // randomSeed(analogRead(0)); // For testing purposes of speed and cadence
 
@@ -217,7 +223,10 @@ void setup() {
   currentPwm = 5;
   digitalWrite(PWM, LOW);
   attachInterrupt(digitalPinToInterrupt(SYNC), syncSignal, RISING);
-
+  if (serial_debug) {
+    Serial.println("SYNC signal attached");
+  }
+  
   if (!BLE.begin()) { // Error starting the bluetooth module
     if (serial_debug) {
       Serial.println("Error initiliazing bluetooth module, please restart");
@@ -256,6 +265,9 @@ void setup() {
 
   // start advertising
   BLE.advertise();
+  if (serial_debug) {
+    Serial.println("BLE advertisement started");
+  }
 
   BLE.setEventHandler(BLEConnected, blePeripheralConnectHandler);
   BLE.setEventHandler(BLEDisconnected, blePeripheralDisconnectHandler);
@@ -264,12 +276,20 @@ void setup() {
   pinMode(SPEED, INPUT);
   pinMode(CADENCE, INPUT);
   attachInterrupt(digitalPinToInterrupt(SPEED), speedPulseInterrupt, FALLING);
-  attachInterrupt(digitalPinToInterrupt(CADENCE), cadencePulseInterrupt, RISING);
+  //attachInterrupt(digitalPinToInterrupt(CADENCE), cadencePulseInterrupt, RISING);
+  attachInterrupt(digitalPinToInterrupt(CADENCE), cadencePulseInterruptTimer, RISING);
+  if (serial_debug) {
+    Serial.println("Speed + Cadence pin interrupts attached");
+  }
 
   // Initialize training to stopped
   training_status = STOPPED;
   training_started = 0;
   training_elapsed = 0;
+  if (serial_debug) {
+    Serial.println("Arduino Smart Bike Trainer started!");
+  }
+
 }
 
 /**
@@ -278,17 +298,6 @@ void setup() {
  * @return void
  */
 void loop() {
-  if (serial_debug && write_startup_message) {
-    Serial.print(DEVICE_NAME_LONG);
-    Serial.println(" (");
-    Serial.print(DEVICE_NAME_SHORT);
-    Serial.println(")");
-
-    Serial.println("No BLE connection");
-    Serial.println("BLE advertisement started");
-    Serial.println("Speed + Cadence pin interrupts attached");
-    write_startup_message = false;
-  }
   BLE.poll();
 
   central = BLE.central();
@@ -309,7 +318,7 @@ void loop() {
     }
   }
 
-  instantaneous_speed = calculate_speed(speed_counter, speed_counter_ibd, speed_timer, speed_timer_ibd);
+  //instantaneous_speed = calculate_speed(speed_counter, speed_counter_ibd, speed_timer, speed_timer_ibd);
 
   // Write correct resistance level to the brake, only if riding at a minimum speed (1 m/s or 3.6 km/h)
   if (instantaneous_speed >= 0.5) {
@@ -363,6 +372,16 @@ unsigned int calculate_cadence(unsigned long current_counter, unsigned long prev
 }
 
 /**
+ * Calculates the instantaneous cadence (rotations per minute) based on the duration of the last interrupt interval
+ */
+unsigned int calculate_cadence_from_timer(unsigned long previous_timer, unsigned long last_timer) {
+  unsigned long cadence_interval = last_timer - previous_timer; // The duration in millis between the last two interrupts
+  if (cadence_interval > 100) {
+    return round( 1.0/ cadence_interval * 1000 * 60 );
+  } else return 0;
+}
+
+/**
  * Generates the brake PWM signal according to the settings of the requested resistance
  * 
  * @global currentPwm       The index for the current resistance
@@ -398,23 +417,23 @@ void writeIndoorBikeDataCharacteristic() {
   ibdBuffer[0] = 0x00 | flagInstantaneousCadence | flagIntantaneousPower; // More Data = 0 (instantaneous speed present), bit 2: instantaneous cadence present
   ibdBuffer[1] = 0;
 
-  double instantaneous_speed = calculate_speed(speed_counter, speed_counter_ibd, speed_timer, speed_timer_ibd);
+  instantaneous_speed = calculate_speed(speed_counter, speed_counter_ibd, speed_timer, speed_timer_ibd);
   double sp = calculate_speed(speed_counter, speed_counter_ibd, speed_timer, speed_timer_ibd);
   int s = round((instantaneous_speed * 3.6 * 100)); // instantaneous_speed is m/s. IndoorBikeData needs km/h in resolution of 0.01
+  s = 3000;
   ibdBuffer[2] = s & 0xFF; // Instantaneous Speed, uint16
   ibdBuffer[3] = (s >> 8) & 0xFF;
 
-  int instantaneous_cadence = calculate_cadence(cadence_counter, cadence_counter_ibd, cadence_timer, cadence_timer_ibd) * 2; // Cadence should be multiplide by 2
+  // int instantaneous_cadence = calculate_cadence(cadence_counter, cadence_counter_ibd, cadence_timer, cadence_timer_ibd) * 2; // Cadence should be multiplde by 2
+  instantaneous_cadence = calculate_cadence_from_timer(cadence_previous_timer, cadence_timer) * 2;
+  instantaneous_cadence = 95;
   ibdBuffer[4] = (int)round(instantaneous_cadence) & 0xFF; // Instantaneous Cadence, uint16
   ibdBuffer[5] = ((int)round(instantaneous_cadence) >> 8) & 0xFF;
 
-  Serial.println("****");
-  Serial.println(sp);
-  grade = 1; Serial.println(grade);
-  Serial.println(weight);
-  crr = 0.005; Serial.println(crr);
+  //grade = 1; Serial.println(grade);
+  //crr = 0.005; Serial.println(crr);
   instantaneous_power = sp * ( (weight * 9.81 * sin(atan(grade/100))) + (crr * weight * 9.81 * cos(atan(grade/100))) );
-  Serial.println(instantaneous_power);
+  instantaneous_power = 220;
   ibdBuffer[6] = (int)round(instantaneous_power) & 0xFF; // Instantaneous Power, uint16
   ibdBuffer[7] = ((int)round(instantaneous_power) >> 8) & 0xFF;
   
@@ -500,13 +519,17 @@ void handleControlPoint() {
       break;
     }
     case fmcpSetIndoorBikeSimulationParameters: {
-      wind_speed = fmcpData.values.OCTETS[0] + (fmcpData.values.OCTETS[1] * 256);
-      grade = fmcpData.values.OCTETS[2] + (fmcpData.values.OCTETS[3] * 256);
+      // wind_speed = fmcpData.values.OCTETS[0] + (fmcpData.values.OCTETS[1] * 256);
+      short ws = (fmcpData.values.OCTETS[0] << 8) + fmcpData.values.OCTETS[1];
+      wind_speed = ws;
+      // grade = fmcpData.values.OCTETS[2] + (fmcpData.values.OCTETS[3] * 256);
+      short gr = (fmcpData.values.OCTETS[3] << 8) + fmcpData.values.OCTETS[2];
+      grade = gr;
       crr = fmcpData.values.OCTETS[4];
       cw = fmcpData.values.OCTETS[5];
       if (serial_debug) {
-        Serial.print("Wind speed (1000): "); Serial.println((int)(wind_speed));
-        Serial.print("Grade (100): "); Serial.println((int)grade);
+        Serial.print("Wind speed (1000): "); Serial.println(wind_speed);
+        Serial.print("Grade (100): "); Serial.println(grade);
         Serial.print("Crr (10000): "); Serial.println((int)crr);
         Serial.print("Cw (100): "); Serial.println((int)cw);
       }
@@ -592,6 +615,11 @@ void speedPulseInterrupt() {
 
 void cadencePulseInterrupt() {
   cadence_counter++;
+  cadence_timer = millis();
+}
+
+void cadencePulseInterruptTimer() {
+  cadence_previous_timer = cadence_timer;
   cadence_timer = millis();
 }
 
