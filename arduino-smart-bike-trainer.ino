@@ -1,7 +1,7 @@
 #include <ArduinoBLE.h>
 #include <math.h>
 
-boolean serial_debug = true; // Will write some debug information to Serial
+boolean serial_debug = false; // Will write some debug information to Serial. If true, the progam waits for the serial monitor to be opened. So, set to false if only power connected. Otherwise the program will not start.
 boolean write_startup_message = true;
 
 double BRAKE_SIZE = 23.35; // Distance between two brake speed pulses in mm.
@@ -275,9 +275,8 @@ void setup() {
   // Speed and Cadence handling
   pinMode(SPEED, INPUT);
   pinMode(CADENCE, INPUT);
-  attachInterrupt(digitalPinToInterrupt(SPEED), speedPulseInterrupt, FALLING);
-  //attachInterrupt(digitalPinToInterrupt(CADENCE), cadencePulseInterrupt, RISING);
-  attachInterrupt(digitalPinToInterrupt(CADENCE), cadencePulseInterruptTimer, RISING);
+  attachInterrupt(digitalPinToInterrupt(SPEED), speedPulseInterrupt, FALLING); // The original signal from the trainer is either high or low, depending on the location of the speed sensor in the wheel. So we can react on the rising or falling of the signal.
+  attachInterrupt(digitalPinToInterrupt(CADENCE), cadencePulseInterruptTimer, RISING); // The original signal from the trainer is high when no cadence measured. But in our hardware setup, the pulse goes through the inverting schmitt trigger!
   if (serial_debug) {
     Serial.println("Speed + Cadence pin interrupts attached");
   }
