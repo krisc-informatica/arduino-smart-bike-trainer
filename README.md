@@ -4,7 +4,7 @@ The goal of this project is to develop a smart indoor trainer starting from the 
 
 [https://github.com/krisc-informatica/arduino-csc-bike-trainer](https://github.com/krisc-informatica/arduino-csc-bike-trainer) implements the CSC Profile (Cycling Speed and Cadence) as it appears to be incompatible with the FTMS profile when advertised in the same code. For example, the BKOOL software was working incorrectly when receiving both service data.
 
-Documentation also on [https://krisc-informatica.github.io/arduino-smart-bike-trainer/](GitHub pages)
+Documentation also on [GitHub pages](https://krisc-informatica.github.io/arduino-smart-bike-trainer)
 
 ## The trainer cable
 According to [https://hackaday.io/project/164276-tacx-flow-ant-conversion](https://hackaday.io/project/164276-tacx-flow-ant-conversion) the cable layout of the RJ10 connector on the Tacx Flow is as follows:
