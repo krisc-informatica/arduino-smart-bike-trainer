@@ -428,6 +428,8 @@ void writeIndoorBikeDataCharacteristic() {
   ibdBuffer[5] = ((int)round(instantaneous_cadence) >> 8) & 0xFF;
 
   // See: https://www.omnicalculator.com/sports/cycling-wattage
+  // P = (Fg + Fr + Fa) * v / (1 - loss)
+  // Simplified formula used below: speed * (Fg + Fr)
   instantaneous_power = sp * ( (weight * 9.81 * sin(atan(grade/100))) + (crr * weight * 9.81 * cos(atan(grade/100))) );
   ibdBuffer[6] = (int)round(instantaneous_power) & 0xFF; // Instantaneous Power, uint16
   ibdBuffer[7] = ((int)round(instantaneous_power) >> 8) & 0xFF;
