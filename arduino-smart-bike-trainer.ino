@@ -1,7 +1,7 @@
 #include <ArduinoBLE.h>
 #include <math.h>
 
-boolean serial_debug = false; // Will write some debug information to Serial. If true, the progam waits for the serial monitor to be opened. So, set to false if only power connected. Otherwise the program will not start.
+boolean serial_debug = true; // Will write some debug information to Serial. If true, the progam waits for the serial monitor to be opened. So, set to false if only power connected. Otherwise the program will not start.
 boolean write_startup_message = true;
 
 double BRAKE_SIZE = 23.35; // Distance between two brake speed pulses in mm.
@@ -344,7 +344,7 @@ void loop() {
  * @return double
  */
 double calculate_speed(unsigned long current_counter, unsigned long previous_counter, unsigned long current_timer, unsigned long previous_timer) {
-  if ((current_timer == previous_timer) || current_timer - previous_timer > 5000) {
+  if ((current_timer == previous_timer)) { // || current_timer - previous_timer > 5000) {
     return 0.0;
   } else {
     return (current_counter - previous_counter) * BRAKE_SIZE / (double)(current_timer - previous_timer);
@@ -417,7 +417,7 @@ void writeIndoorBikeDataCharacteristic() {
   ibdBuffer[1] = 0;
 
   instantaneous_speed = calculate_speed(speed_counter, speed_counter_ibd, speed_timer, speed_timer_ibd);
-  double sp = calculate_speed(speed_counter, speed_counter_ibd, speed_timer, speed_timer_ibd);
+  // double sp = calculate_speed(speed_counter, speed_counter_ibd, speed_timer, speed_timer_ibd);
   int s = round((instantaneous_speed * 3.6 * 100)); // instantaneous_speed is m/s. IndoorBikeData needs km/h in resolution of 0.01
   ibdBuffer[2] = s & 0xFF; // Instantaneous Speed, uint16
   ibdBuffer[3] = (s >> 8) & 0xFF;
@@ -433,7 +433,7 @@ void writeIndoorBikeDataCharacteristic() {
   int ELEVATION = 40; // Some value for the elevation above sea level.
   double rho = 1.225 * exp(-0.00011856 * ELEVATION);
   float cdA = 0.324; // The coefficient when holding steer on hoods
-  instantaneous_power = sp * ( (weight * 9.80655 * sin(atan(grade/100))) + (crr * weight * 9.80655 * cos(atan(grade/100))) + (0.5 * cdA * rho * pow(sp + wind_speed, 2)) );
+  instantaneous_power = instantaneous_speed * ( (weight * 9.80655 * sin(atan(grade/100))) + (crr * weight * 9.80655 * cos(atan(grade/100))) + (0.5 * cdA * rho * pow(instantaneous_speed + wind_speed, 2)) );
   ibdBuffer[6] = (int)round(instantaneous_power) & 0xFF; // Instantaneous Power, uint16
   ibdBuffer[7] = ((int)round(instantaneous_power) >> 8) & 0xFF;
   
@@ -446,6 +446,8 @@ void writeIndoorBikeDataCharacteristic() {
   cadence_timer_ibd = cadence_timer;
   
   if (serial_debug) {
+    Serial.print("Power");
+    Serial.println(instantaneous_power);
     Serial.println("Indoor Bike Data written");
   }
 }
@@ -520,16 +522,16 @@ void handleControlPoint() {
     }
     case fmcpSetIndoorBikeSimulationParameters: {
       short ws = (fmcpData.values.OCTETS[0] << 8) + fmcpData.values.OCTETS[1]; // Short is 16 bit signed, so the windspeed is converted from two bytes to signed value. Highest bit is sign bit
-      wind_speed = ws;
+      wind_speed = ws / 1000.0;
       short gr = (fmcpData.values.OCTETS[3] << 8) + fmcpData.values.OCTETS[2]; // Short is 16 bit signed, so a negative grade is correctly converted from two bytes to signed value. Highest bit is sign bit
-      grade = gr;
-      crr = fmcpData.values.OCTETS[4];
-      cw = fmcpData.values.OCTETS[5];
+      grade = gr / 100.0;
+      crr = fmcpData.values.OCTETS[4] / 10000.0;
+      cw = fmcpData.values.OCTETS[5] / 100.0;
       if (serial_debug) { // Remember, if debugging with Zwift, that these values are divided by 2 if in normal settings!
         Serial.print("Wind speed (1000): "); Serial.println(wind_speed);
         Serial.print("Grade (100): "); Serial.println(grade);
-        Serial.print("Crr (10000): "); Serial.println((int)crr);
-        Serial.print("Cw (100): "); Serial.println((int)cw);
+        Serial.print("Crr (10000): "); Serial.println(crr);
+        Serial.print("Cw (100): "); Serial.println(cw);
       }
               
       setTrainerResistance(wind_speed, grade, crr, cw);
